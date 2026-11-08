@@ -1,0 +1,99 @@
+name: Build & test
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bridge:
+    name: bridge (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: windows-latest
+            platform: windows-x64
+          - os: macos-latest
+            platform: macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Configure
+        run: cmake -S bridge -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Syntax check JS
+        run: |
+          node --check JamConnect/jamconnect.js
+          node --check webapp/app.js
+          node --check m4l/jamconnect-m4l.js
+
+      - name: Integration test (Link peer <-> bridge <-> JamConnect)
+        run: node tests/integration.mjs --bin build
+        timeout-minutes: 3
+
+      - name: Package
+        shell: bash
+        run: |
+          set -e
+          out=dist/jamconnect-link-${{ matrix.platform }}
+          mkdir -p "$out/webapp"
+          if [ -f build/Release/jamlink-bridge.exe ]; then cp build/Release/*.exe "$out/"; \
+          elif [ -f build/jamlink-bridge.exe ]; then cp build/*.exe "$out/"; \
+          else cp build/jamlink-bridge build/linkpeer "$out/"; fi
+          cp webapp/* "$out/webapp/"
+          cp JamConnect/jamconnect.js "$out/webapp/"
+          python3 m4l/build_device.py "$out/m4l" || python m4l/build_device.py "$out/m4l"
+          cp m4l/*.js "$out/m4l/"
+          cp README.md PROTOCOL.md "$out/"
+          cd dist && (7z a -tzip "jamconnect-link-${{ matrix.platform }}.zip" "jamconnect-link-${{ matrix.platform }}" >/dev/null 2>&1 || zip -qr "jamconnect-link-${{ matrix.platform }}.zip" "jamconnect-link-${{ matrix.platform }}")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jamconnect-link-${{ matrix.platform }}
+          path: dist/jamconnect-link-${{ matrix.platform }}
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/jamconnect-link-${{ matrix.platform }}.zip
+
+  m4l-device:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Max for Live device
+        run: |
+          python3 m4l/build_device.py dist/m4l
+          cp m4l/*.js dist/m4l/
+          python3 - <<'EOF'
+          import json, struct
+          data = open('dist/m4l/JamConnectLink.amxd', 'rb').read()
+          assert data[:4] == b'ampf' and data[8:12] == b'mmmm', 'bad amxd header'
+          n = struct.unpack('<I', data[28:32])[0]
+          patch = json.loads(data[32:32 + n].rstrip(b'\x00\n'))
+          assert any('node.script' in b['box'].get('text', '') for b in patch['patcher']['boxes'])
+          print('amxd ok,', n, 'bytes of patcher')
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jamconnect-link-m4l
+          path: dist/m4l

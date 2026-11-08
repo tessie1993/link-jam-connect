@@ -426,3 +426,12 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+# JamConnect Link
+build/
+dist/
+_site/
+node_modules/
+tests/.m4l-under-test.cjs
+__pycache__/
+

@@ -1,0 +1,30 @@
+cmake_minimum_required(VERSION 3.16)
+project(JamLinkBridge CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Full Ableton Link source tree (git clone --recursive https://github.com/Ableton/link)
+set(LINK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../link" CACHE PATH "Path to the Ableton Link repository")
+include(${LINK_DIR}/AbletonLinkConfig.cmake)
+
+function(jamlink_target name)
+  target_link_libraries(${name} PRIVATE Ableton::Link)
+  link_pin_win32_winnt(${name})
+  if(WIN32)
+    target_link_libraries(${name} PRIVATE ws2_32 iphlpapi mswsock winmm)
+    target_compile_definitions(${name} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    if(MINGW)
+      target_link_options(${name} PRIVATE -static)
+    endif()
+  endif()
+  if(MSVC)
+    target_compile_options(${name} PRIVATE /bigobj /W3)
+  endif()
+endfunction()
+
+add_executable(jamlink-bridge src/main.cpp src/WebSocketServer.hpp src/Sha1.hpp)
+jamlink_target(jamlink-bridge)
+
+add_executable(linkpeer tools/linkpeer.cpp)
+jamlink_target(linkpeer)
