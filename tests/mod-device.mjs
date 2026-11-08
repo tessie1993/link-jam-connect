@@ -437,8 +437,8 @@ const runDevice = (dev) => { const t = setInterval(() => dev.tick(performance.no
   ok(lp.length <= allow(cfg.send.liveParamIntervalMs) && mm.length <= allow(cfg.send.m4lMacroIntervalMs) && cc.length <= allow(cfg.send.m4lCcIntervalMs), 'each Ableton target sends at its configured rate', `${lp.length}/${allow(cfg.send.liveParamIntervalMs)} ${mm.length}/${allow(cfg.send.m4lMacroIntervalMs)} ${cc.length}/${allow(cfg.send.m4lCcIntervalMs)}`);
   const total = lp.length + mm.length + cc.length;
   ok(total <= cfg.send.abletonMaxPerSecond * elapsed / 1000 + cfg.send.abletonMaxPerSecond, 'total Ableton traffic within abletonMaxPerSecond', `${total} msgs`);
-  await sleep(100);
-  ok(near(live.get('live_set tracks 1 devices 0 parameters 3', 'value'), lp.at(-1).normalized, 1e-9), 'the Live parameter follows the modulation (fake LOM)');
+  // Wait for the last message to travel bridge -> M4L node script -> LiveAPI js (slow CI runners).
+  ok(await waitFor(() => near(live.get('live_set tracks 1 devices 0 parameters 3', 'value'), lp.at(-1).normalized, 1e-9), 3000), 'the Live parameter follows the modulation (fake LOM)');
   ok(m4l.lc.out.dials.some((d) => d[0] === 2) && m4l.ccs().some((c) => c[0] === 74 && c[2] === 3), 'the device moves its macro dial and sends the CC');
   const tight = new M.ModDevice({ cfg: { ...cfg, send: { ...cfg.send, abletonMaxPerSecond: 10 } }, core: await newCore(), clock: noTimeline, io: connIo(mod), seed: 4 });
   tight.addSource({ id: 'l', type: 'lfo', params: { shape: 'saw', sync: 'free', hz: 4 } });
