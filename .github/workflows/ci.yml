@@ -39,14 +39,19 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      - name: Syntax check JS
+      - name: Syntax check JS / config
         run: |
           node --check JamConnect/jamconnect.js
           node --check webapp/app.js
           node --check m4l/jamconnect-m4l.js
+          node -e "JSON.parse(require('fs').readFileSync('jamconnect.config.json','utf8'))"
+
+      - name: WebRTC session + Link clock sync test (no binaries)
+        run: node tests/webrtc-sync.mjs --config jamconnect.config.json
+        timeout-minutes: 3
 
       - name: Integration test (Link peer <-> bridge <-> JamConnect)
-        run: node tests/integration.mjs --bin build
+        run: node tests/integration.mjs --bin build --config jamconnect.config.json
         timeout-minutes: 3
 
       - name: Package
@@ -62,7 +67,7 @@ jobs:
           cp JamConnect/jamconnect.js "$out/webapp/"
           python3 m4l/build_device.py "$out/m4l" || python m4l/build_device.py "$out/m4l"
           cp m4l/*.js "$out/m4l/"
-          cp README.md PROTOCOL.md "$out/"
+          cp README.md PROTOCOL.md jamconnect.config.json "$out/"
           cd dist && (7z a -tzip "jamconnect-link-${{ matrix.platform }}.zip" "jamconnect-link-${{ matrix.platform }}" >/dev/null 2>&1 || zip -qr "jamconnect-link-${{ matrix.platform }}.zip" "jamconnect-link-${{ matrix.platform }}")
 
       - uses: actions/upload-artifact@v4

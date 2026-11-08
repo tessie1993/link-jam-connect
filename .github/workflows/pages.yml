@@ -3,7 +3,7 @@ name: Publish web app
 on:
   push:
     branches: [main]
-    paths: ['webapp/**', 'JamConnect/jamconnect.js', '.github/workflows/pages.yml']
+    paths: ['webapp/**', 'JamConnect/jamconnect.js', 'jamconnect.config.json', '.github/workflows/pages.yml']
   workflow_dispatch:
 
 permissions:
@@ -28,6 +28,7 @@ jobs:
           mkdir -p _site
           cp webapp/* _site/
           cp JamConnect/jamconnect.js _site/
+          cp jamconnect.config.json _site/
       - uses: actions/configure-pages@v5
         with:
           enablement: true

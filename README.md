@@ -35,11 +35,12 @@ Each zip contains `jamlink-bridge`, `linkpeer` (a test peer), the web app and th
 1. **In Live:** Preferences → Link, Tempo & MIDI → turn on **Link** and **Start Stop Sync**.
 2. **Run the bridge:**
    ```
-   jamlink-bridge --static webapp
+   jamlink-bridge
    ```
-   Options: `--port 20809`, `--bind 0.0.0.0` (allow LAN devices), `--token SECRET`, `--quantum 4`.
-   Live now shows one more Link peer.
-3. **Open the web app** at http://127.0.0.1:20809/, or the GitHub Pages copy.
+   It reads `jamconnect.config.json` from its own folder (or `--config <file>`). Flags override single
+   values: `--port`, `--bind 0.0.0.0` (allow LAN devices), `--token SECRET`, `--quantum`, `--bpm`,
+   `--static <dir>`. Live now shows one more Link peer.
+3. **Open the web app** at the address the bridge prints (`http://<bind>:<port>/`), or the GitHub Pages copy.
    * **LOCAL:** connect straight to the bridge. Tempo, play/stop and the phase bar now follow Live in both directions.
    * **WEBRTC HOST:** creates a JamConnect session (QR code / invite link) with the bridge attached. Remote
      guests are phase-locked to Live and can change tempo or start/stop if you allow it.
@@ -48,6 +49,28 @@ Each zip contains `jamlink-bridge`, `linkpeer` (a test peer), the web app and th
    (keep the two `.js` files next to it, then *Freeze Device* to embed them). Pads in the web app now play
    that instrument, the track's MIDI is sent to the other jammers, and the **Ableton Live set** panel can
    fire clips and scenes.
+
+## Configuration
+
+Everything that can be tuned lives in **`jamconnect.config.json`**. No component has its own
+port, URL, tempo, timeout or ICE server built in:
+
+| Section | Used by | Contents |
+|---------|---------|----------|
+| `bridge` | jamlink-bridge | bind, port, token, initial tempo (only used when no Link session exists), quantum, tempo range, start/stop sync, intervals, timeouts, message size limit, static web roots |
+| `client` | jamconnect.js, web app | app name, bridge URL/token (empty URL = derived), follow-Link, quantum, timeouts, follower tuning, Link clock measurement (`linkClock`) |
+| `webrtc` | jamconnect.js, web app | PeerJS id prefixes, session/token lengths and alphabets, **ICE/TURN servers**, **PeerJS signaling server** (`signal`: host, port, path, secure, key) |
+| `m4l` | Max for Live device | bridge URL/token (empty = from `bridge`), device name, reconnect delay, LiveAPI limits, pad note length |
+
+* The bridge requires every `bridge` key and refuses to start if one is missing.
+* When the bridge serves the web app, it publishes `/jamconnect.config.json` with the client sections plus
+  runtime facts (real port, session id, whether a token is required). The bridge token is never published.
+* The web app's **Settings** panel overrides the bridge URL, signaling server and ICE servers per browser.
+* `jamconnect.js` keeps fallback values identical to the shipped file, so existing JamConnect apps that
+  never load a config keep working. Call `JamConnector.loadConfig()` or `JamConnector.configure(obj)` to
+  use your own.
+* `client.linkClock` follows Ableton Link's `Measurement.hpp` / `Sessions.hpp` exactly and ships Link's
+  constants: 100 data points (median), 50 ms ping timeout, 5 timeouts, re-measure every 30 s.
 
 ## Using the library in your own JamConnect app
 
@@ -76,7 +99,8 @@ tempo or start/stop changes.
 git clone --recursive https://github.com/tessie1993/link-jam-connect
 cmake -S bridge -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
-node tests/integration.mjs --bin build
+node tests/webrtc-sync.mjs                                   # no binaries needed
+node tests/integration.mjs --bin build --config jamconnect.config.json
 ```
 
 Needs CMake ≥ 3.16 and a C++17 compiler (MSVC, Clang, GCC or MinGW). `link/` is the Ableton Link

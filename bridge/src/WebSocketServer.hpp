@@ -87,6 +87,8 @@ public:
   std::function<void(SessionPtr, const std::string&)> onMessage;
   std::function<void(SessionPtr)> onClose;
   std::function<void(const std::string&)> onLog;
+  // Dynamic HTTP GET handler, consulted before static files. Return true if handled.
+  std::function<bool(const std::string& path, std::string& body, std::string& contentType)> onHttp;
 
   WebSocketServer(asio::io_context& io, const asio::ip::tcp::endpoint& endpoint)
     : mAcceptor(io)
@@ -98,6 +100,8 @@ public:
   }
 
   void addStaticRoot(const std::string& dir) { mStaticRoots.push_back(dir); }
+  void setMaxMessageBytes(std::size_t n) { mMaxMessageBytes = n; }
+  std::size_t maxMessageBytes() const { return mMaxMessageBytes; }
   const std::vector<std::string>& staticRoots() const { return mStaticRoots; }
 
   void start() { accept(); }
@@ -123,6 +127,7 @@ private:
 
   asio::ip::tcp::acceptor mAcceptor;
   std::vector<std::string> mStaticRoots;
+  std::size_t mMaxMessageBytes = 0; // 0 = unlimited; set from config
   uint64_t mNextId = 0;
 };
 
@@ -247,6 +252,17 @@ inline void WsSession::serveFile(const std::string& target)
     writeRaw("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n", true);
     return;
   }
+  {
+    std::string body, type;
+    if (mServer.onHttp && mServer.onHttp(path, body, type))
+    {
+      writeRaw("HTTP/1.1 200 OK\r\nContent-Type: " + type + "\r\nContent-Length: "
+                 + std::to_string(body.size())
+                 + "\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n" + body,
+        true);
+      return;
+    }
+  }
   for (const auto& root : mServer.staticRoots())
   {
     std::ifstream f(root + path, std::ios::binary);
@@ -286,7 +302,7 @@ inline void WsSession::readFrames()
 
 inline void WsSession::processFrames()
 {
-  static const size_t kMaxMessage = 4 * 1024 * 1024;
+  const size_t maxMessage = mServer.maxMessageBytes();
   while (!mClosed && mRx.size() >= 2)
   {
     const bool fin = (mRx[0] & 0x80) != 0;
@@ -310,7 +326,7 @@ inline void WsSession::processFrames()
         len = (len << 8) | mRx[2 + static_cast<size_t>(i)];
       pos = 10;
     }
-    if (len > kMaxMessage)
+    if (maxMessage && (len > maxMessage || mFragment.size() + len > maxMessage))
     {
       close();
       return;

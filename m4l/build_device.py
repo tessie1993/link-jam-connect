@@ -10,10 +10,30 @@ loading it in Live once, use "Freeze Device" to embed both scripts.
 """
 import json
 import os
+import shutil
 import struct
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+CONFIG_NAME = "jamconnect.config.json"
+
+
+def load_config(path=None):
+    path = path or os.path.join(HERE, "..", CONFIG_NAME)
+    with open(path, encoding="utf-8") as f:
+        return json.load(f), os.path.abspath(path)
+
+
+def bridge_url(cfg):
+    m4l = cfg.get("m4l", {})
+    if m4l.get("bridgeUrl"):
+        return m4l["bridgeUrl"]
+    bridge = cfg["bridge"]
+    host = "127.0.0.1" if bridge["bind"] in ("0.0.0.0", "::") else bridge["bind"]
+    return "ws://%s:%d" % (host, bridge["port"])
+
+
+CONFIG, CONFIG_PATH = load_config(os.environ.get("JAMCONNECT_CONFIG"))
 
 boxes = []
 lines = []
@@ -100,7 +120,7 @@ wire("route", 5, "peers_prep")
 wire("peers_prep", 0, "peers_msg")
 
 for bid, text, x, px in [
-    ("btn_connect", "connect ws://127.0.0.1:20809", 480, 8),
+    ("btn_connect", "connect " + bridge_url(CONFIG), 480, 8),
     ("btn_disconnect", "disconnect", 700, 200),
 ]:
     box(bid, "message", text, (x, 160, 200 if bid == "btn_connect" else 80, 22),
@@ -133,6 +153,7 @@ patcher = {
         "dependency_cache": [
             {"name": "jamconnect-m4l.js", "bootpath": ".", "type": "TEXT", "implicit": 1},
             {"name": "jamconnect-live.js", "bootpath": ".", "type": "TEXT", "implicit": 1},
+            {"name": CONFIG_NAME, "bootpath": ".", "type": "JSON", "implicit": 1},
         ],
         "latency": 0,
         "is_mpe": 0,
@@ -157,6 +178,9 @@ def main():
     with open(os.path.join(out, "JamConnectLink.maxpat"), "w", encoding="utf-8") as f:
         json.dump(patcher, f, indent=1)
     write_amxd(os.path.join(out, "JamConnectLink.amxd"), patcher)
+    # The node script reads the config from its own folder (also embedded when frozen).
+    if os.path.abspath(out) != os.path.dirname(CONFIG_PATH):
+        shutil.copyfile(CONFIG_PATH, os.path.join(out, CONFIG_NAME))
     print(f"wrote JamConnectLink.maxpat / .amxd to {out} ({len(boxes)} boxes, {len(lines)} lines)")
 
 

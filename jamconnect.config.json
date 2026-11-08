@@ -1,0 +1,81 @@
+{
+  "bridge": {
+    "bind": "127.0.0.1",
+    "port": 20809,
+    "token": "",
+    "initialTempo": 120,
+    "quantum": 4,
+    "startStopSync": true,
+    "tempoMin": 20,
+    "tempoMax": 999,
+    "stateIntervalMs": 100,
+    "pingIntervalMs": 2000,
+    "authTimeoutMs": 6000,
+    "maxMessageBytes": 4194304,
+    "statusIntervalMs": 250,
+    "sessionPrefix": "LINK-",
+    "static": [
+      "webapp",
+      "JamConnect"
+    ]
+  },
+  "client": {
+    "appName": "JamConnect Link Web",
+    "bridgeUrl": "",
+    "bridgeToken": "",
+    "followLink": true,
+    "quantum": 4,
+    "tempoMin": 20,
+    "tempoMax": 999,
+    "bridgeConnectTimeoutMs": 6000,
+    "joinTimeoutMs": 12000,
+    "guestAuthTimeoutMs": 6000,
+    "pingIntervalMs": 10000,
+    "hostStateIntervalMs": 250,
+    "followIntervalMs": 50,
+    "followMaxDriftMs": 8,
+    "paramChangeBufferMs": 30,
+    "linkClock": {
+      "numberDataPoints": 100,
+      "numberMeasurements": 5,
+      "pingTimeoutMs": 50,
+      "remeasureMs": 30000
+    },
+    "heartbeatIntervalMs": 10000,
+    "legacy": {
+      "rejectCloseDelayMs": 150,
+      "clockSamples": 8
+    }
+  },
+  "webrtc": {
+    "peerPrefix": "jam-",
+    "sessionPrefix": "JAM-",
+    "sessionCodeLength": 4,
+    "tokenLength": 8,
+    "iceServers": [
+      {
+        "urls": "stun:stun.l.google.com:19302"
+      },
+      {
+        "urls": "stun:stun1.l.google.com:19302"
+      },
+      {
+        "urls": "stun:stun2.l.google.com:19302"
+      }
+    ],
+    "guestCodeLength": 5,
+    "codeAlphabet": "23456789ABCDEFGHJKLMNPQRSTUVWXYZ",
+    "tokenAlphabet": "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz",
+    "signal": {}
+  },
+  "m4l": {
+    "bridgeUrl": "",
+    "bridgeToken": "",
+    "name": "Ableton Live (M4L)",
+    "reconnectMs": 2000,
+    "maxTracks": 16,
+    "maxScenes": 16,
+    "padNoteMs": 150,
+    "padDefaultVelocity": 0.8
+  }
+}

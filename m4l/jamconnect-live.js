@@ -6,9 +6,6 @@ autowatch = 1;
 inlets = 1;
 outlets = 1;
 
-var MAX_TRACKS = 16;
-var MAX_SCENES = 16;
-
 function api(path) {
   return new LiveAPI(path);
 }
@@ -17,10 +14,16 @@ function first(v) {
   return (v && v.length !== undefined) ? v[0] : v;
 }
 
-function getSetInfo() {
+// Limits come from jamconnect.config.json (m4l.maxTracks / maxScenes) via the node script.
+function limit(count, max) {
+  var m = parseInt(max, 10);
+  return isNaN(m) || m <= 0 ? count : Math.min(count, m);
+}
+
+function getSetInfo(msg) {
   var set = api("live_set");
-  var nTracks = Math.min(set.getcount("tracks"), MAX_TRACKS);
-  var nScenes = Math.min(set.getcount("scenes"), MAX_SCENES);
+  var nTracks = limit(set.getcount("tracks"), msg.maxTracks);
+  var nScenes = limit(set.getcount("scenes"), msg.maxScenes);
   var info = { tracks: [], scenes: [], tempo: Number(first(set.get("tempo"))) };
 
   for (var s = 0; s < nScenes; s++) {
@@ -54,7 +57,7 @@ function live(type, json) {
   try {
     switch (type) {
       case "LIVE_GET_SET":
-        getSetInfo();
+        getSetInfo(msg);
         break;
       case "LIVE_FIRE_CLIP":
         api("live_set tracks " + intArg(msg, "track") + " clip_slots " + intArg(msg, "scene")).call("fire");

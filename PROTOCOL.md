@@ -57,10 +57,28 @@ client on receipt at local time now:
     if pgt: data += (gt + pgt) / 2 - ht
 ```
 
-The client pings every 25 ms until it has 100 data points. The offset is
-their **median**. Bursts repeat every 5 s. The first estimate is published
-after 6 points so the UI can lock on quickly. Any JamConnect node answers
-`LINK_PING`, so the same code runs over WebSocket and WebRTC.
+The procedure is Link's, step for step (`client.linkClock` ships Link's constants):
+
+| Step | Link source | Config (value) |
+|------|-------------|----------------|
+| Next ping right after each pong, carrying the received `gt` as `pgt` | `Measurement.hpp:178-181` | none |
+| Finish when there are **more than** N data points; offset = **median** | `Measurement.hpp:45,197`, `MeasurementService.hpp:171` | `numberDataPoints` (100) |
+| No pong within the timeout: new ping with host time only | `Measurement.hpp:113-128` | `pingTimeoutMs` (50) |
+| Fail after that many timeouts (count not reset by pongs) | `Measurement.hpp:46,122-131` | `numberMeasurements` (5) |
+| Measure the session again periodically | `Sessions.hpp:186` | `remeasureMs` (30000) |
+
+Nothing is published until a measurement completes, as in Link. If a measurement
+fails before any estimate exists, a new one starts right away. Otherwise the previous
+estimate is kept until the next scheduled measurement. Link's 50 ms timeout is meant
+for a LAN: over internet WebRTC with round trips above 50 ms, measurements still
+complete (pongs to timed-out pings are used too), but they take longer and fail more
+often. Any JamConnect node answers `LINK_PING`, so the same code runs over WebSocket
+and WebRTC.
+
+Like Link and NTP, the exchange assumes equal delay in both directions. Jitter is
+filtered by the median. A *constant* asymmetry between the up and down paths
+shows up as an offset error of half the difference. On localhost and LAN this is
+negligible. Over the internet it bounds WebRTC guest accuracy.
 
 ## Timeline state
 
@@ -118,6 +136,30 @@ WebRTC host between guests and the bridge. This is how a phone on WebRTC can
 play an instrument inside Ableton through the Max for Live device.
 
 `MIDI_EVENT.event` = `{ kind: "noteon"|"noteoff"|"cc", note|cc, velocity|value, channel }`.
+
+## Timing rules (Link owns musical timing)
+
+The library adds no musical delays of its own. Every timing comes from Link or
+from a measurement:
+
+* **Start / stop / tempo** inside a session always go through the Link timeline
+  (`LINK_SET_PLAYING` / `LINK_SET_TEMPO`). With peers present, a start lands on the
+  next quantum boundary, like Link's `requestBeatAtStartPlayingTime`. Tone.js
+  follows the timeline (`client.followLink`, default `true`). Joining a playing
+  session starts phase-aligned at the audio engine's own lookahead.
+* **`PAD_PLAY.linkBeat`**: the Link beat the pad sounds on. Receivers schedule it
+  at that beat on their own timeline, so every peer plays it at the same Link
+  moment. Snapped pads (snap strength > 0) go forward to the next 1/16 grid point
+  that the session can still reach, using the **measured** one-way latency (half
+  the median RTT from the Link clock measurement). Unsnapped pads and messages
+  without `linkBeat` play on arrival. `delayFromSendMs` is still sent for older
+  receivers.
+* Legacy `TRANSPORT_STATE` / `TRANSPORT_HEARTBEAT` are ignored for timing whenever
+  a Link timeline exists. A host without a bridge still emits them for older
+  JamConnect builds, with `delaySec` taken from the Link start time.
+* The only 500 ms in the system is Link's own `SESSION_EPS` (when two Link sessions
+  meet, the older one wins only if it is more than 500 ms older). It belongs to Link
+  and is not changed.
 
 ## Ableton Live control (Max for Live device)
 

@@ -89,6 +89,21 @@
         <button id="join-connect" class="btn-primary mt-3 w-full">JOIN</button>
       </div>
 
+      <details class="mt-4 box">
+        <summary class="text-[11px] text-slate-400 cursor-pointer">SETTINGS (signaling server, ICE / TURN, bridge URL)</summary>
+        <p class="hint mt-2">Defaults come from <code>jamconnect.config.json</code>. Values saved here override it in this browser.</p>
+        <label class="lbl">Bridge URL override (empty = from config)</label>
+        <input id="set-bridge-url" class="inp" placeholder="ws://host:port" />
+        <label class="lbl">PeerJS signaling options (JSON: host, port, path, secure, key)</label>
+        <textarea id="set-signal" rows="3" class="inp"></textarea>
+        <label class="lbl">ICE servers (JSON array, add TURN for strict NATs)</label>
+        <textarea id="set-ice" rows="4" class="inp"></textarea>
+        <div class="flex gap-2 mt-2">
+          <button id="settings-save" class="btn">SAVE &amp; RELOAD</button>
+          <button id="settings-reset" class="btn">RESET</button>
+        </div>
+      </details>
+
       <label class="lbl mt-4">Your name</label>
       <input id="user-name" class="inp" />
       <div id="conn-error" class="hidden mt-3 text-xs text-rose-300 bg-rose-950/60 border border-rose-800 rounded px-2 py-1.5"></div>
@@ -103,7 +118,7 @@
             <div class="lbl">Tempo</div>
             <div class="flex items-center gap-2">
               <button class="btn" data-nudge="-1">−</button>
-              <input id="tempo" type="number" step="0.01" min="20" max="999" class="bg-transparent text-5xl font-bold text-amber-400 w-48 outline-none" value="120.00" />
+              <input id="tempo" type="number" step="0.01" class="bg-transparent text-5xl font-bold text-amber-400 w-48 outline-none" placeholder="—" />
               <button class="btn" data-nudge="1">+</button>
             </div>
           </div>
