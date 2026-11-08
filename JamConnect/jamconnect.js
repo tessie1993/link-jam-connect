@@ -88,6 +88,16 @@ function jamBridgeUrl(cfg = JAMCONNECT_CONFIG) {
 }
 
 const BRIDGE_PEER_ID = 'BRIDGE';
+
+/** Minimal Tone.js surface for connectors created without Tone (clock = performance.now). */
+function jamPassiveTone() {
+  const ctx = { get currentTime() { return performance.now() / 1000; }, lookAhead: 0 };
+  return {
+    now: () => ctx.currentTime,
+    context: ctx,
+    Transport: { bpm: { value: null }, swing: 0, state: 'stopped', seconds: 0, ticks: 0, PPQ: 192, start() {}, stop() {} }
+  };
+}
 // Messages that are point-to-point and never relayed between hops.
 const JAM_LOCAL_MESSAGE_TYPES = new Set([
   'AUTH_HELLO', 'AUTH_OK', 'AUTH_REJECTED', 'PING', 'PONG', 'CLOCK_SYNC',
@@ -558,7 +568,9 @@ function generateRandomCode(length, alphabet = JAMCONNECT_CONFIG.webrtc.codeAlph
 class JamConnector {
   constructor(appName, toneInstance, options = {}) {
     this.appName = appName;
-    this.Tone = toneInstance;
+    // Apps without Tone.js (e.g. the wavetable synth) get a passive stand-in, so legacy transport
+    // handling never dereferences null; musical timing still comes from the Link timeline.
+    this.Tone = toneInstance || jamPassiveTone();
     this.isHost = false;
     // Per-instance config = global config (jamconnect.config.json) + options.config overrides.
     this.config = jamMergeConfig(JAMCONNECT_CONFIG, options.config || {});

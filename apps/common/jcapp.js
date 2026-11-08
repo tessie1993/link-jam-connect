@@ -175,7 +175,7 @@
     $('jc-status').innerHTML = STATUS_HTML;
 
     // Tempo always comes from the Link session or the user, never a default.
-    const connector = new JamConnector(appCfg.appName || opts.appKey, typeof Tone !== 'undefined' ? Tone : null,
+    const connector = new JamConnector(appCfg.appName || opts.appKey, opts.tone || (typeof Tone !== 'undefined' ? Tone : null),
       { followLink: false, adoptTransportTempo: false });
 
     const relayHandlers = [];
