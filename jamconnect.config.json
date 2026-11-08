@@ -1303,6 +1303,7 @@
     "guestCodeLength": 5,
     "codeAlphabet": "23456789ABCDEFGHJKLMNPQRSTUVWXYZ",
     "tokenAlphabet": "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz",
+    "inviteBaseUrl": "https://tessie1993.github.io/link-jam-connect/",
     "signal": {}
   },
   "m4l": {
