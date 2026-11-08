@@ -23,6 +23,7 @@ Ableton Live ──Link── jamlink-bridge ──ws://localhost── web app 
 | Max for Live | `m4l/` | MIDI effect: Live MIDI ↔ JamConnect, LiveAPI control (song, tracks, mixer, clips, devices, params, observers), macros + mappings |
 | Live Control | `apps/live-control/` | Browser app: Link header, session grid, mixer, song controls, device/parameter browser, MIDI learn |
 | M4L Controller | `apps/m4l-controller/` | Browser app: pick a Max for Live device, macro dials + mapping editor, Link-quantized pads/keyboard, CC faders, MIDI monitor |
+| Wavetable Synth | `apps/wavetable-synth/` | Browser synth, DSP in Rust → WebAssembly (`dsp-rs/`): wavetables, filter, envelopes, LFOs, mod matrix, FX, presets; JamConnect instrument (PARAMS-PROTOCOL, MIDI / pads on the Link timeline) |
 | Protocol | `PROTOCOL.md` | Message spec, including the clock sync algorithm |
 | Tests | `tests/` | `integration.mjs` (CI, real headless Link peer + bridge), `webrtc-sync.mjs`, `live-control.mjs`, `m4l-controller.mjs` (pure Node) |
 
@@ -151,6 +152,48 @@ would only add `postMessage` hops and a second copy of the state.
 Sensors and touch need a real phone in a **secure context**: `http://localhost` (the bridge on the same
 machine) counts as secure; LAN phones need https, e.g. the Pages deployment joining over WebRTC.
 
+## Wavetable Synth app
+
+`apps/wavetable-synth/` (served at `/apps/wavetable-synth/`, deployed to Pages) is a polyphonic wavetable
+synth that is a full JamConnect instrument. **All audio DSP is Rust compiled to WebAssembly**
+(`apps/wavetable-synth/dsp-rs/`, plain C ABI, no wasm-bindgen); JavaScript is only the UI shell and glue.
+
+* **Engine (Rust → `engine/synth.wasm`):** 2 wavetable oscillators with morph, band-limited mip levels
+  (FFT, no harmonic above Nyquist at any pitch), unison (voices / detune / stereo spread), phase and random
+  phase, octave / semi / fine; sub oscillator and noise; stereo SVF (LP12, LP24, BP, HP, notch) with drive,
+  key tracking and envelope; 3 ADSR, 2 LFOs (7 shapes; free, note retrigger, or locked to the Link beat;
+  rate free or synced to Link divisions); an 8-slot modulation matrix (config `modSlots`, up to 16); poly
+  with voice stealing (quietest released voice first, then the oldest, with a short fade), mono and
+  legato, glide, velocity, pitch bend, mod wheel, aftertouch, sustain; chorus, delay synced to the Link
+  tempo, FDN reverb, master gain + lookahead limiter. Factory tables are generated procedurally (basic
+  shapes, PWM, vocal formants, harmonic sweep, digital, hard sync, organ); **WAV import** turns a file into
+  a wavetable (frame size from the menu or a Serum `clm` chunk) and keeps it in the browser (IndexedDB).
+* **AudioWorklet:** `worklet/processor.js` instantiates the wasm (compiled once on the page and passed in),
+  feeds it parameters and events with sample offsets, and copies its output. Every modulatable parameter
+  is a pair of AudioParams (`<id>` and a bipolar `<id>.mod` lane), so `JAM_PARAM_SET` / `JAM_PARAM_CURVE`
+  are scheduled by Web Audio itself; automated values reach the engine as per-quantum ramps.
+* **No engine, clear message:** if `engine/synth.wasm` is missing (it is never committed), the page says
+  so and points to the CI artifact. Every push to `main` builds it (job `synth-wasm`, artifact
+  `synth-wasm`), the release zips and Pages include it.
+* **Presets:** 18 factory presets (bass, lead, pad, pluck, keys, fx), user presets in localStorage,
+  import / export JSON, init patch, A/B compare, and *send preset* / *get preset* to and from another synth
+  instance in the session (`JAM_PRESET_*`, gated by the host's *Params / macros* permission).
+* **JamConnect:** same connection panel and Link header as the other apps. Plays `MIDI_EVENT` (notes, CCs
+  via `client.synth.midi.ccMap`, pitch bend) and `PAD_PLAY`, scheduled at their `linkBeat` when present;
+  an on-screen keyboard (velocity from the touch position), computer keys and Web MIDI; optional
+  quantized note-on on the Link grid; optionally sends what you play as `MIDI_EVENT` with `linkBeat` so the
+  Max for Live device can record it in Live. It implements [PARAMS-PROTOCOL](docs/PARAMS-PROTOCOL.md) as an
+  `instrument`: announces every parameter (range, scale, steps, current value), accepts SET / CURVE /
+  TOUCH / RELEASE (absolute and offset), echoes `JAM_PARAM_CHANGED` rate-limited by
+  `client.synth.protocol.echoIntervalMs`, and shows incoming modulation as rings on the knobs. Several
+  synths in one session are addressed by their `instanceId`.
+* **UI:** knobs (drag, Shift or FINE for fine drag, wheel, arrow keys, double-click / double-tap = default),
+  3D wavetable view following the modulated position, oscilloscope + spectrum, phone and tablet layouts.
+
+Building the engine needs the Rust toolchain only in CI. Locally you can test the JS side
+(`node tests/wavetable-synth.mjs` uses a mock engine with the same exports), or put the CI-built
+`synth.wasm` into `apps/wavetable-synth/engine/` to test against the real engine.
+
 ## Configuration
 
 Everything that can be tuned lives in **`jamconnect.config.json`**. No component has its own
@@ -159,7 +202,7 @@ port, URL, tempo, timeout or ICE server built in:
 | Section | Used by | Contents |
 |---------|---------|----------|
 | `bridge` | jamlink-bridge | bind, port, token, initial tempo (only used when no Link session exists), quantum, tempo range, start/stop sync, intervals, timeouts, message size limit, static web roots (`"/prefix=dir"` mounts a directory under a URL path, e.g. `/apps=apps`) |
-| `client` | jamconnect.js, web apps | app name, bridge URL/token (empty URL = derived), bridge retry interval, follow-Link, quantum, timeouts, follower tuning, Link clock measurement (`linkClock`), `liveControl` and `m4lController` app settings (send throttles, pads, keyboard, CCs, quantize options, discovery interval), `modulator` (mod device: limits, per-target send rates, curve tolerance / lookahead / buffers, sensor, gesture and physics tuning, chaos constants, parameter ranges, UI) |
+| `client` | jamconnect.js, web apps | app name, bridge URL/token (empty URL = derived), bridge retry interval, follow-Link, quantum, timeouts, follower tuning, Link clock measurement (`linkClock`), `liveControl` and `m4lController` app settings (send throttles, pads, keyboard, CCs, quantize options, discovery interval), `modulator` (mod device: limits, per-target send rates, curve tolerance / lookahead / buffers, sensor, gesture and physics tuning, chaos constants, parameter ranges, UI), `synth` (wavetable synth: engine limits and DSP constants, wavetable sizes, sync divisions, every parameter's range and default, protocol echo rate and curve tolerance, MIDI / keyboard / CC map, UI ranges, preset categories) |
 | `webrtc` | jamconnect.js, web app | PeerJS id prefixes, session/token lengths and alphabets, **ICE/TURN servers**, **PeerJS signaling server** (`signal`: host, port, path, secure, key) |
 | `m4l` | Max for Live device | bridge URL/token (empty = from `bridge`), device name, reconnect delay, LiveAPI limits (tracks, scenes, returns, sends, devices, params, observers), observer rate limit, status interval and peer timeout, MIDI forwarding, note lengths, macros (count, names, ranges), mapping limit |
 
@@ -203,6 +246,8 @@ cmake --build build --config Release
 node tests/webrtc-sync.mjs                                   # no binaries needed
 node tests/live-control.mjs                                  # LiveAPI side + routing, mocked Max/Live
 node tests/m4l-controller.mjs                                # M4L_* device protocol, mocked Max/Live
+node tests/wavetable-synth.mjs                               # synth: protocol, presets, Link scheduling, worklet (real wasm if present)
+cd apps/wavetable-synth/dsp-rs && cargo test && cargo build --release --target wasm32-unknown-unknown   # synth engine (CI does this)
 node tests/integration.mjs --bin build --config jamconnect.config.json
 ```
 

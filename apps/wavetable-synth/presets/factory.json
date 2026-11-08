@@ -1,0 +1,170 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "name": "Sub Wobble", "category": "bass", "version": 1,
+      "params": {
+        "osc1.table": "Basic Shapes", "osc1.pos": 0.6667, "sub.level": 0.6, "sub.shape": "Sine",
+        "filter.type": "LP24", "filter.cutoff": 300, "filter.reso": 0.35, "filter.env": 0.2,
+        "lfo1.sync": "On", "lfo1.div": "1/8", "lfo1.shape": "Sine", "lfo1.retrig": "Beat",
+        "mod1.src": "LFO 1", "mod1.dst": "Cutoff", "mod1.amt": 0.45,
+        "voice.mode": "Mono", "voice.glideMode": "Legato", "voice.glide": 0.06,
+        "env1.a": 0.002, "env1.d": 0.3, "env1.s": 0.9, "env1.r": 0.12, "amp.level": -4
+      }
+    },
+    {
+      "name": "Reese", "category": "bass", "version": 1,
+      "params": {
+        "osc1.pos": 0.6667, "osc1.unison": 4, "osc1.detune": 25, "osc1.spread": 0.3,
+        "osc2.on": "On", "osc2.pos": 0.6667, "osc2.fine": 12, "osc2.level": 0.6,
+        "sub.level": 0.3, "filter.type": "LP24", "filter.cutoff": 600, "filter.reso": 0.2, "filter.drive": 6,
+        "voice.mode": "Mono", "voice.glideMode": "Legato", "voice.glide": 0.05,
+        "env1.a": 0.003, "env1.s": 1, "env1.r": 0.15, "amp.level": -6
+      }
+    },
+    {
+      "name": "Digital Bass", "category": "bass", "version": 1,
+      "params": {
+        "osc1.table": "Digital", "osc1.pos": 0.3, "mod1.src": "Env 2", "mod1.dst": "Osc1 Pos", "mod1.amt": 0.5,
+        "env2.a": 0.001, "env2.d": 0.25, "env2.s": 0, "env2.r": 0.2,
+        "filter.type": "LP12", "filter.cutoff": 900, "filter.env": 0.35, "filter.reso": 0.3,
+        "sub.level": 0.4, "voice.mode": "Mono", "env1.a": 0.001, "env1.d": 0.4, "env1.s": 0.7, "env1.r": 0.1
+      }
+    },
+    {
+      "name": "Supersaw Lead", "category": "lead", "version": 1,
+      "params": {
+        "osc1.pos": 0.6667, "osc1.unison": 7, "osc1.detune": 30, "osc1.spread": 0.8,
+        "osc2.on": "On", "osc2.pos": 0.6667, "osc2.oct": 1, "osc2.level": 0.4, "osc2.unison": 3, "osc2.detune": 15,
+        "filter.type": "LP12", "filter.cutoff": 6000, "filter.reso": 0.15,
+        "delay.on": "On", "delay.div": "1/8D", "delay.mix": 0.2, "reverb.on": "On", "reverb.mix": 0.2,
+        "voice.glideMode": "Legato", "voice.glide": 0.04,
+        "env1.a": 0.005, "env1.d": 0.4, "env1.s": 0.8, "env1.r": 0.3, "amp.level": -8
+      }
+    },
+    {
+      "name": "Vowel Lead", "category": "lead", "version": 1,
+      "params": {
+        "osc1.table": "Vocal", "osc1.pos": 0.2, "lfo1.shape": "Triangle", "lfo1.rate": 0.8,
+        "mod1.src": "LFO 1", "mod1.dst": "Osc1 Pos", "mod1.amt": 0.4,
+        "mod2.src": "Mod Wheel", "mod2.dst": "Osc1 Pos", "mod2.amt": 0.4,
+        "lfo2.shape": "Sine", "lfo2.rate": 5.5, "mod3.src": "LFO 2", "mod3.dst": "Pitch", "mod3.amt": 0.006,
+        "filter.type": "LP24", "filter.cutoff": 4000, "voice.mode": "Mono", "voice.glideMode": "Always", "voice.glide": 0.08,
+        "env1.a": 0.01, "env1.s": 0.9, "env1.r": 0.25
+      }
+    },
+    {
+      "name": "Sync Scream", "category": "lead", "version": 1,
+      "params": {
+        "osc1.table": "Hard Sync", "osc1.pos": 0.3, "mod1.src": "Env 3", "mod1.dst": "Osc1 Pos", "mod1.amt": 0.6,
+        "env3.a": 0.001, "env3.d": 0.6, "env3.s": 0.2, "env3.r": 0.3,
+        "filter.type": "LP12", "filter.cutoff": 8000, "filter.drive": 8, "voice.mode": "Legato",
+        "delay.on": "On", "delay.div": "1/8", "delay.mix": 0.2, "env1.a": 0.003, "env1.s": 0.85, "amp.level": -9
+      }
+    },
+    {
+      "name": "Warm Pad", "category": "pad", "version": 1,
+      "params": {
+        "osc1.pos": 0.5, "osc1.unison": 4, "osc1.detune": 15, "osc1.spread": 0.7,
+        "osc2.on": "On", "osc2.table": "PWM", "osc2.pos": 0.3, "osc2.semi": 7, "osc2.level": 0.4,
+        "filter.type": "LP24", "filter.cutoff": 2500, "filter.reso": 0.1, "filter.env": 0.15, "filter.key": 0.3,
+        "env1.a": 1.2, "env1.d": 1, "env1.s": 0.8, "env1.r": 2.5, "env2.a": 0.8, "env2.d": 1.5, "env2.s": 0.4, "env2.r": 2,
+        "lfo1.rate": 0.2, "mod1.src": "LFO 1", "mod1.dst": "Osc2 Pos", "mod1.amt": 0.3,
+        "chorus.on": "On", "reverb.on": "On", "reverb.size": 0.8, "reverb.mix": 0.35, "amp.level": -10
+      }
+    },
+    {
+      "name": "Glass Pad", "category": "pad", "version": 1,
+      "params": {
+        "osc1.table": "Harmonic Sweep", "osc1.pos": 0.6, "lfo1.rate": 0.1, "mod1.src": "LFO 1", "mod1.dst": "Osc1 Pos", "mod1.amt": 0.35,
+        "osc2.on": "On", "osc2.table": "Organ", "osc2.pos": 0.8, "osc2.oct": 1, "osc2.level": 0.3,
+        "filter.type": "LP12", "filter.cutoff": 9000, "env1.a": 2, "env1.s": 0.9, "env1.r": 3,
+        "reverb.on": "On", "reverb.size": 0.9, "reverb.mix": 0.45, "delay.on": "On", "delay.div": "1/4", "delay.mix": 0.2, "amp.level": -10
+      }
+    },
+    {
+      "name": "Vocal Choir", "category": "pad", "version": 1,
+      "params": {
+        "osc1.table": "Vocal", "osc1.pos": 0.5, "osc1.unison": 6, "osc1.detune": 18, "osc1.spread": 0.9,
+        "lfo1.shape": "Smooth Random", "lfo1.rate": 0.15, "mod1.src": "LFO 1", "mod1.dst": "Osc1 Pos", "mod1.amt": 0.5,
+        "env1.a": 0.8, "env1.s": 0.9, "env1.r": 2, "reverb.on": "On", "reverb.size": 0.75, "reverb.damp": 0.3, "reverb.mix": 0.4,
+        "chorus.on": "On", "filter.cutoff": 5000, "amp.level": -10
+      }
+    },
+    {
+      "name": "Glass Pluck", "category": "pluck", "version": 1,
+      "params": {
+        "osc1.table": "Harmonic Sweep", "osc1.pos": 0.4, "filter.type": "LP24", "filter.cutoff": 500, "filter.env": 0.55,
+        "filter.reso": 0.25, "filter.key": 0.5, "env2.a": 0.001, "env2.d": 0.35, "env2.s": 0, "env2.r": 0.3,
+        "env1.a": 0.001, "env1.d": 0.6, "env1.s": 0, "env1.r": 0.5,
+        "delay.on": "On", "delay.div": "1/8D", "delay.mix": 0.25, "delay.feedback": 0.4, "reverb.on": "On", "reverb.mix": 0.2
+      }
+    },
+    {
+      "name": "Digi Pluck", "category": "pluck", "version": 1,
+      "params": {
+        "osc1.table": "Digital", "osc1.pos": 0.8, "mod1.src": "Env 2", "mod1.dst": "Osc1 Pos", "mod1.amt": -0.6,
+        "env2.a": 0.001, "env2.d": 0.2, "env2.s": 0, "env1.a": 0.001, "env1.d": 0.4, "env1.s": 0, "env1.r": 0.3,
+        "filter.type": "LP12", "filter.cutoff": 2000, "filter.env": 0.3,
+        "delay.on": "On", "delay.div": "1/16", "delay.mix": 0.2, "delay.pingpong": "On"
+      }
+    },
+    {
+      "name": "PWM Pluck", "category": "pluck", "version": 1,
+      "params": {
+        "osc1.table": "PWM", "osc1.pos": 0.2, "mod1.src": "Env 2", "mod1.dst": "Osc1 Pos", "mod1.amt": 0.6,
+        "env2.a": 0.001, "env2.d": 0.3, "env2.s": 0, "env1.a": 0.001, "env1.d": 0.5, "env1.s": 0, "env1.r": 0.35,
+        "filter.type": "LP24", "filter.cutoff": 1200, "filter.env": 0.5, "filter.reso": 0.3, "chorus.on": "On"
+      }
+    },
+    {
+      "name": "Drawbar Organ", "category": "keys", "version": 1,
+      "params": {
+        "osc1.table": "Organ", "osc1.pos": 0.66, "osc1.rand": 0, "env1.a": 0.003, "env1.d": 0.1, "env1.s": 1, "env1.r": 0.05,
+        "filter.on": "Off", "amp.velSens": 0, "chorus.on": "On", "chorus.rate": 6, "chorus.depth": 0.2, "chorus.mix": 0.3,
+        "reverb.on": "On", "reverb.size": 0.4, "reverb.mix": 0.15, "amp.level": -9
+      }
+    },
+    {
+      "name": "E-Piano", "category": "keys", "version": 1,
+      "params": {
+        "osc1.pos": 0, "osc1.rand": 0, "osc2.on": "On", "osc2.pos": 0.3333, "osc2.oct": 2, "osc2.level": 0,
+        "mod1.src": "Env 3", "mod1.dst": "Osc2 Level", "mod1.amt": 0.6, "env3.a": 0.001, "env3.d": 0.3, "env3.s": 0, "env3.r": 0.2,
+        "mod2.src": "Velocity", "mod2.dst": "Osc1 Pos", "mod2.amt": 0.3,
+        "env1.a": 0.002, "env1.d": 1.8, "env1.s": 0.2, "env1.r": 0.4, "amp.velSens": 0.8,
+        "filter.cutoff": 6000, "chorus.on": "On", "chorus.depth": 0.3, "chorus.mix": 0.3
+      }
+    },
+    {
+      "name": "Clav Keys", "category": "keys", "version": 1,
+      "params": {
+        "osc1.table": "PWM", "osc1.pos": 0.7, "filter.type": "BP", "filter.cutoff": 1500, "filter.reso": 0.3, "filter.env": 0.3,
+        "env2.a": 0.001, "env2.d": 0.2, "env2.s": 0, "env1.a": 0.001, "env1.d": 0.4, "env1.s": 0.3, "env1.r": 0.1, "amp.velSens": 0.7
+      }
+    },
+    {
+      "name": "Rising Noise", "category": "fx", "version": 1,
+      "params": {
+        "osc1.on": "Off", "noise.level": 0.8, "noise.color": 0.3, "filter.type": "LP24", "filter.cutoff": 200, "filter.reso": 0.5,
+        "mod1.src": "Env 3", "mod1.dst": "Cutoff", "mod1.amt": 0.8, "env3.a": 4, "env3.d": 1, "env3.s": 1, "env3.r": 2,
+        "env1.a": 0.5, "env1.s": 1, "env1.r": 2, "reverb.on": "On", "reverb.size": 0.9, "reverb.mix": 0.4, "delay.on": "On"
+      }
+    },
+    {
+      "name": "Laser Zap", "category": "fx", "version": 1,
+      "params": {
+        "osc1.pos": 0.6667, "mod1.src": "Env 2", "mod1.dst": "Pitch", "mod1.amt": 1,
+        "env2.a": 0.001, "env2.d": 0.15, "env2.s": 0, "env2.r": 0.1, "env1.a": 0.001, "env1.d": 0.25, "env1.s": 0, "env1.r": 0.1,
+        "delay.on": "On", "delay.div": "1/16", "delay.feedback": 0.5, "delay.mix": 0.3
+      }
+    },
+    {
+      "name": "Random Bleeps", "category": "fx", "version": 1,
+      "params": {
+        "osc1.table": "Digital", "osc1.pos": 0.5, "lfo1.shape": "S&H", "lfo1.sync": "On", "lfo1.div": "1/16", "lfo1.retrig": "Beat",
+        "mod1.src": "LFO 1", "mod1.dst": "Pitch", "mod1.amt": 0.5, "mod2.src": "LFO 1", "mod2.dst": "Osc1 Pos", "mod2.amt": 0.4,
+        "env1.a": 0.001, "env1.d": 0.1, "env1.s": 0.6, "env1.r": 0.2, "delay.on": "On", "reverb.on": "On", "reverb.mix": 0.2
+      }
+    }
+  ]
+}

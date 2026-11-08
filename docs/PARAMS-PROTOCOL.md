@@ -73,3 +73,29 @@ Additive clarifications, as implemented by `apps/mod-device`:
 
 Instruments may also accept the legacy `DEVICE_PARAMETER_CHANGE {appName, param, value}`.
 Unknown fields must be ignored. Every message carries `appName` (added by `sendRelayMessage`).
+
+## Additions (wavetable synth, `apps/wavetable-synth/`)
+
+All additive and optional; receivers that do not know them ignore them.
+
+* **Current values in the manifest:** each `Param` in `JAM_PARAMS_ANNOUNCE` also carries `value` (current
+  normalized value), so a modulator can start from where the instrument is. `target: "*"` addresses every instance.
+* **Offset lane:** a `mode: "offset"` curve's `norm` is the bipolar offset in normalized units of the
+  parameter (-1..1, depth already applied by the sender) and is added to the knob value, clamped to 0..1.
+  Each modulatable parameter has one offset lane; the newest offset curve replaces the previous one.
+  Touch ownership applies to the knob value (`absolute` SET/CURVE), not to the offset lane.
+* **Streaming curves:** a curve replaces what was scheduled from its own first point on, so senders can
+  stream overlapping chunks. Segment shapes are scheduled as `setValueAtTime` (`step`),
+  `linearRampToValueAtTime` (`linear`), `exponentialRampToValueAtTime` (`exp`, same-sign non-zero ends)
+  and error-bounded linear subdivisions (`s`, and `exp` through zero), tolerance `client.synth.protocol.curveTolerance`.
+* **Permissions:** a WebRTC host relays `JAM_*` traffic without checking it, so the instrument enforces
+  `syncDeviceParameterChange` itself for SET / CURVE / TOUCH / RELEASE / PRESET_LOAD coming from guests,
+  and guests do not send them while the permission is off.
+* **Presets:**
+
+| Message | Direction | Fields |
+|---|---|---|
+| `JAM_PRESET_LOAD` | any → instrument | `{target, preset, source?}`: load a preset (`{name, category, version, params: {id: value}}`, values in real units, value lists by label). Needs `syncDeviceParameterChange` from guests |
+| `JAM_PRESET_GET` | any → instrument | `{target, requestId?}` |
+| `JAM_PRESET_STATE` | instrument → all | `{instanceId, preset, requestId?}`: reply to GET |
+| `JAM_PRESET_CHANGED` | instrument → all | `{instanceId, name, category, values: {id: norm}}`: sent once after a preset load instead of one `JAM_PARAM_CHANGED` per parameter |

@@ -11,10 +11,54 @@ permissions:
   contents: write
 
 jobs:
+  synth-wasm:
+    name: wavetable synth engine (Rust -> wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/wavetable-synth/dsp-rs
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: cargo test (native)
+        working-directory: apps/wavetable-synth/dsp-rs
+        run: cargo test
+
+      - name: cargo build (wasm32-unknown-unknown)
+        working-directory: apps/wavetable-synth/dsp-rs
+        run: cargo build --release --target wasm32-unknown-unknown
+
+      - name: Copy (and optimise with wasm-opt when available)
+        run: |
+          src=apps/wavetable-synth/dsp-rs/target/wasm32-unknown-unknown/release/jc_wavetable_synth.wasm
+          dst=apps/wavetable-synth/engine/synth.wasm
+          mkdir -p apps/wavetable-synth/engine
+          if command -v wasm-opt >/dev/null 2>&1 && wasm-opt -O3 "$src" -o "$dst"; then echo "wasm-opt applied"; else cp "$src" "$dst"; fi
+          ls -l "$dst"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synth-wasm
+          path: apps/wavetable-synth/engine/synth.wasm
+
+      - name: Synth test against the real wasm (worklet offline, no browser)
+        run: node tests/wavetable-synth.mjs --config jamconnect.config.json --require-wasm
+        timeout-minutes: 5
+
   bridge:
     name: bridge (${{ matrix.os }})
-    # One wasm-core job per line (e.g. synth-wasm from feature/wavetable-synth), each with its own download step below.
+    # One wasm-core job per line, each with its own download step below.
     needs:
+      - synth-wasm
       - mod-wasm
     runs-on: ${{ matrix.os }}
     strategy:
@@ -43,6 +87,7 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Syntax check JS / config
+        shell: bash
         run: |
           node --check JamConnect/jamconnect.js
           node --check webapp/app.js
@@ -55,7 +100,9 @@ jobs:
           node --check apps/mod-device/engine.js
           node --check apps/mod-device/schema.js
           node --check tests/mod-core-mock.cjs
+          for f in apps/wavetable-synth/*.js apps/wavetable-synth/dsp/*.js apps/wavetable-synth/worklet/*.js; do node --check "$f"; done
           node -e "JSON.parse(require('fs').readFileSync('jamconnect.config.json','utf8'))"
+          node -e "JSON.parse(require('fs').readFileSync('apps/wavetable-synth/presets/factory.json','utf8'))"
 
       - name: WebRTC session + Link clock sync test (no binaries)
         run: node tests/webrtc-sync.mjs --config jamconnect.config.json
@@ -82,6 +129,12 @@ jobs:
         with:
           name: mod-core-wasm
           path: apps/mod-device/engine
+
+      - name: Wavetable synth engine (built by synth-wasm)
+        uses: actions/download-artifact@v4
+        with:
+          name: synth-wasm
+          path: apps/wavetable-synth/engine
 
       - name: Package
         shell: bash

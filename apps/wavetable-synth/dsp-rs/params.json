@@ -1,0 +1,41 @@
+{
+  "comment": "Contract between the Rust engine (src/params.rs, src/synth.rs) and the JS shell (dsp/params.js, engine glue). Checked by `cargo test` (Rust side) and tests/wavetable-synth.mjs (JS side). Parameter index = position in `fixed`, then FIXED_COUNT + 3 * slot + field for the modulation matrix.",
+  "fixed": [
+    "osc1.on", "osc1.table", "osc1.pos", "osc1.oct", "osc1.semi", "osc1.fine", "osc1.level", "osc1.pan", "osc1.unison", "osc1.detune", "osc1.spread", "osc1.phase", "osc1.rand",
+    "osc2.on", "osc2.table", "osc2.pos", "osc2.oct", "osc2.semi", "osc2.fine", "osc2.level", "osc2.pan", "osc2.unison", "osc2.detune", "osc2.spread", "osc2.phase", "osc2.rand",
+    "sub.level", "sub.oct", "sub.shape", "noise.level", "noise.color",
+    "filter.on", "filter.type", "filter.cutoff", "filter.reso", "filter.drive", "filter.key", "filter.env",
+    "amp.level", "amp.velSens",
+    "env1.a", "env1.d", "env1.s", "env1.r",
+    "env2.a", "env2.d", "env2.s", "env2.r",
+    "env3.a", "env3.d", "env3.s", "env3.r",
+    "lfo1.shape", "lfo1.rate", "lfo1.sync", "lfo1.div", "lfo1.retrig", "lfo1.phase",
+    "lfo2.shape", "lfo2.rate", "lfo2.sync", "lfo2.div", "lfo2.retrig", "lfo2.phase",
+    "voice.mode", "voice.poly", "voice.glideMode", "voice.glide", "voice.bend",
+    "chorus.on", "chorus.rate", "chorus.depth", "chorus.mix",
+    "delay.on", "delay.sync", "delay.div", "delay.time", "delay.feedback", "delay.mix", "delay.pingpong", "delay.tone",
+    "reverb.on", "reverb.size", "reverb.damp", "reverb.mix",
+    "master.gain", "master.limit", "master.ceiling"
+  ],
+  "modSlotFields": ["src", "dst", "amt"],
+  "maxModSlots": 16,
+  "maxDivisions": 32,
+  "scales": ["lin", "exp", "db"],
+  "controllers": ["bend", "wheel", "aftertouch", "sustain"],
+  "modSources": ["None", "Env 1", "Env 2", "Env 3", "LFO 1", "LFO 2", "Velocity", "Mod Wheel", "Key Track", "Aftertouch", "Random", "Pitch Bend"],
+  "modDests": ["None", "Osc1 Pos", "Osc2 Pos", "Pitch", "Osc1 Pitch", "Osc2 Pitch", "Osc1 Level", "Osc2 Level", "Osc1 Detune", "Osc2 Detune", "Sub Level", "Noise Level", "Cutoff", "Resonance", "Drive", "Amp", "Pan", "LFO1 Rate", "LFO2 Rate"],
+  "factoryTables": ["Basic Shapes", "PWM", "Vocal", "Harmonic Sweep", "Digital", "Hard Sync", "Organ"],
+  "config": [
+    "engine.maxPolyphony", "engine.maxUnison", "engine.controlBlock", "engine.stealFadeMs", "engine.voiceKillDb",
+    "engine.envCurveEpsilon", "engine.velocityCurve", "engine.filterEnvOctaves", "engine.filterMinHz", "engine.filterMaxRatio",
+    "engine.filterMaxResonance", "engine.driveThresholdDb", "engine.modPitchSemis", "engine.keytrackCenterNote", "engine.keytrackSpanSemis",
+    "engine.noiseTiltCoef", "engine.tuningA4", "engine.chorusBaseMs", "engine.chorusDepthMs", "engine.delayMaxSec",
+    "engine.delaySmoothMs", "engine.reverbMinDecaySec", "engine.reverbMaxDecaySec", "engine.reverbDampMax", "engine.reverbDiffusion",
+    "engine.reverbDelaysMs[0]", "engine.reverbDelaysMs[1]", "engine.reverbDelaysMs[2]", "engine.reverbDelaysMs[3]",
+    "engine.reverbDelaysMs[4]", "engine.reverbDelaysMs[5]", "engine.reverbDelaysMs[6]", "engine.reverbDelaysMs[7]",
+    "engine.reverbDiffusersMs[0]", "engine.reverbDiffusersMs[1]", "engine.reverbDiffusersMs[2]", "engine.reverbDiffusersMs[3]",
+    "engine.limiterLookaheadMs", "engine.limiterReleaseMs", "engine.gainSmoothMs",
+    "wavetable.frames", "wavetable.baseHarmonics", "wavetable.oversample", "wavetable.minTableSize", "wavetable.maxFrames",
+    "wavetable.maxTables", "engine.randomSeed"
+  ]
+}
