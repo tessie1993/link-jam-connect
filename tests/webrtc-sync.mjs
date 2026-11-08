@@ -97,6 +97,21 @@ guest.setLinkPlaying(false);
 await sleep(400);
 ok(host.getLinkState().isPlaying, 'host ignores guest stop without syncTransport permission');
 
+// ---- apps without Tone.js (e.g. the wavetable synth) must connect and get the Link timeline
+{
+  const h = new JamConnector('host-no-tone', null, { followLink: false });
+  const hi = await h.createHostSession();
+  h.setLinkTempo(tempoLo);
+  h.startTransport(); h.updateBpm(tempoLo + 1); h.stopTransport();
+  const g = new JamConnector('guest-no-tone', null, { followLink: false });
+  let threw = null;
+  try { await g.joinHost(hi.inviteUrl, '', 'no-tone'); } catch (e) { threw = e; }
+  ok(!threw && g.isConnectedToHost, 'connector without Tone.js joins (no null Transport access)', threw ? threw.message : '');
+  ok(await waitFor(() => g.getLinkState().tempo === tempoLo + 1 && (g.linkClocks.get('HOST') || {}).ready, 8000),
+    'connector without Tone.js gets the Link timeline and a measured clock');
+  g.disconnect(); h.disconnect();
+}
+
 // ---- Link-timed pads: a snapped pad sounds at the same Link moment on every peer
 await waitFor(() => (guest.linkClocks.get('HOST') || {}).measurements > 0, 10000);
 host.sendPermissionsUpdate({ syncTransport: true });

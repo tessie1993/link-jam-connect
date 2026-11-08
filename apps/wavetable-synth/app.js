@@ -14,7 +14,16 @@ import { validatePreset, presetToNorms, normsToPreset, initNorms } from './dsp/p
 import { parseWav } from './dsp/wav.js';
 
 const $ = (id) => document.getElementById(id);
-const app = await JCApp.start({ appKey: 'synth' });
+let audio = null;      // {ctx, node, analyser}
+const toneShim = {
+  // jamconnect.js converts PAD_PLAY Link beats to audio time through connector.Tone: this maps it to our context.
+  now: () => (audio ? audio.ctx.currentTime : 0),
+  context: { get currentTime() { return audio ? audio.ctx.currentTime : 0; }, lookAhead: 0 },
+  getContext: () => ({ rawContext: audio ? audio.ctx : null }),
+  Transport: { bpm: { value: null }, swing: 0, state: 'stopped', seconds: 0, ticks: 0, PPQ: 192, start() {}, stop() {} }
+};
+// Passed in before connecting: the bridge's first answer (AUTH_OK) already uses connector.Tone.
+const app = await JCApp.start({ appKey: 'synth', tone: toneShim });
 const { connector, config, log, el } = app;
 const S = app.appCfg;
 
@@ -65,18 +74,9 @@ const tableNames = () => [...FACTORY_TABLES, ...userTables.map((t) => t.name)];
 
 // ------------------------------------------------------------------ schema, engine module, audio
 let schema = buildSchema(S, { tables: tableNames() });
-let audio = null;      // {ctx, node, analyser}
 let displaySynth = null;
 let engineError = '';
 
-const toneShim = {
-  // jamconnect.js converts PAD_PLAY Link beats to audio time through connector.Tone: this maps it to our context.
-  now: () => (audio ? audio.ctx.currentTime : 0),
-  context: { get currentTime() { return audio ? audio.ctx.currentTime : 0; }, lookAhead: 0 },
-  getContext: () => ({ rawContext: audio ? audio.ctx : null }),
-  Transport: { bpm: { value: null }, swing: 0, state: 'stopped', seconds: 0, ticks: 0, PPQ: 192, start() {}, stop() {} }
-};
-connector.Tone = toneShim;
 
 const clock = new LinkClock({ connector, getContext: () => (audio ? audio.ctx : null) });
 const post = (msg) => { if (audio) audio.node.port.postMessage(msg); };
