@@ -45,14 +45,14 @@ jobs:
           if command -v wasm-opt >/dev/null 2>&1 && wasm-opt -O3 "$src" -o "$dst"; then echo "wasm-opt applied"; else cp "$src" "$dst"; fi
           ls -l "$dst"
 
-      - name: Synth test against the real wasm (worklet offline, no browser)
-        run: node tests/wavetable-synth.mjs --config jamconnect.config.json --require-wasm
-        timeout-minutes: 5
-
       - uses: actions/upload-artifact@v4
         with:
           name: synth-wasm
           path: apps/wavetable-synth/engine/synth.wasm
+
+      - name: Synth test against the real wasm (worklet offline, no browser)
+        run: node tests/wavetable-synth.mjs --config jamconnect.config.json --require-wasm
+        timeout-minutes: 5
 
   bridge:
     name: bridge (${{ matrix.os }})
