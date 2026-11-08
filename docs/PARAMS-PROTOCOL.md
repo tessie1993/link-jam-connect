@@ -45,6 +45,30 @@ A modulator targeting Ableton converts curves to:
 
 Each target sends at its own configured rate. Values between updates are taken from the curve.
 
+## Modulator notes (added with the mod device)
+
+Additive clarifications, as implemented by `apps/mod-device`:
+
+* **Offset values.** In `JAM_PARAM_CURVE` with `mode: "offset"`, `norm` carries the bipolar offset (-1..1,
+  depth already applied); receivers add it to the base value (normalized) and clamp to 0..1.
+* **Replacing scheduled points.** A curve replaces the points already scheduled by the same `source` for the same
+  param at or after its first `linkBeat`. A modulator that stops an offset route sends a single point
+  `norm: 0` at "now + lead", which cancels its lookahead and returns the parameter to its base.
+* **Ownership.** Modulators send `JAM_PARAM_TOUCH` / `RELEASE` for absolute routes (gesture start / end,
+  hold latch, panic). Offset routes are additive and do not take ownership (unless
+  `client.modulator.touchOffsetRoutes`).
+* **Without a Link timeline** a modulator sends `JAM_PARAM_SET` without `linkBeat` (applied on arrival); offset
+  routes then send the instrument's last known value (from `JAM_PARAM_CHANGED` or the manifest default) plus the
+  offset.
+* **Modulators have manifests too** (`kind: "modulator"`): their params (e.g. `lfo1.hz`, `route3.depth`,
+  `global.depth`) accept `JAM_PARAM_SET` / `CURVE` / `TOUCH` / `RELEASE` and echo `JAM_PARAM_CHANGED`.
+  Choice params carry `valueItems` and `steps`.
+* **Guest permissions.** A WebRTC host relays a guest's `JAM_PARAM_SET` / `CURVE` / `TOUCH` / `RELEASE` only
+  with `syncDeviceParameterChange` ("Params / macros"); otherwise the guest gets `LIVE_ERROR` naming the
+  permission (`jamRemoteControlPermission()` in `jamconnect.js`). Discovery and `JAM_PARAM_CHANGED` need none.
+  Only guest-originated writes are gated: messages from the host itself or from the local bridge
+  (`BRIDGE_PEER_ID`) are never blocked, and a guest never re-checks what the host relays to it.
+
 ## Compatibility
 
 Instruments may also accept the legacy `DEVICE_PARAMETER_CHANGE {appName, param, value}`.

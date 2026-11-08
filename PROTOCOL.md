@@ -367,6 +367,7 @@ permission (`jamRemoteControlPermission()` in `jamconnect.js`). Otherwise the gu
 | `LIVE_SET_SONG` is_playing, `LIVE_SONG_ACTION` start / stop / continue | `syncTransport` |
 | `LIVE_SET_PARAM`, `LIVE_SET_DEVICE_ACTIVE`, `M4L_SET_MACRO`, `M4L_MAP_MACRO`, `M4L_UNMAP_MACRO` | `syncDeviceParameterChange` |
 | `M4L_NOTE`, `M4L_CC`, `M4L_SET_MIDI_FORWARD` | `syncMidi` |
+| `JAM_PARAM_SET`, `JAM_PARAM_CURVE`, `JAM_PARAM_TOUCH`, `JAM_PARAM_RELEASE` (docs/PARAMS-PROTOCOL.md) | `syncDeviceParameterChange` (refused with `LIVE_ERROR`) |
 | every other `LIVE_*` / `M4L_*` (clips, scenes, mixer, tracks, song settings and actions) | `syncLiveControl` (on by default, so existing guests can still launch clips) |
 
 ## Web apps served by the bridge
