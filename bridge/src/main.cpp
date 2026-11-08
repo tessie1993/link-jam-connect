@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <fstream>
 #include <cmath>
 #include <iomanip>
 #include <iostream>
@@ -27,14 +28,28 @@ using namespace std::chrono;
 namespace
 {
 
+const char* kConfigFileName = "jamconnect.config.json";
+
+// All runtime values come from jamconnect.config.json ("bridge" section),
+// optionally overridden on the command line. Nothing is built in.
 struct Options
 {
-  std::string bind = "127.0.0.1";
-  unsigned short port = 20809;
+  std::string configPath;
+  json config;
+  std::string bind;
+  unsigned short port{};
   std::string token;
-  double bpm = 120.0;
-  double quantum = 4.0;
-  bool startStopSync = true;
+  double bpm{};
+  double quantum{};
+  double tempoMin{};
+  double tempoMax{};
+  bool startStopSync{};
+  int stateIntervalMs{};
+  int pingIntervalMs{};
+  int authTimeoutMs{};
+  int statusIntervalMs{};
+  std::size_t maxMessageBytes{};
+  std::string sessionPrefix;
   bool quiet = false;
   std::vector<std::string> staticRoots;
 };
@@ -43,18 +58,86 @@ void printUsage()
 {
   std::cout
     << "jamlink-bridge - JamConnect <-> Ableton Link bridge\n\n"
-       "  --port <n>        WebSocket/HTTP port (default 20809)\n"
-       "  --bind <addr>     listen address (default 127.0.0.1, use 0.0.0.0 for LAN)\n"
-       "  --token <t>       require this JamConnect auth token\n"
-       "  --bpm <bpm>       initial tempo when no Link session exists (default 120)\n"
-       "  --quantum <q>     quantum for phase/launch (default 4)\n"
-       "  --static <dir>    serve files from dir over HTTP (repeatable)\n"
-       "  --no-start-stop   don't enable Link start/stop sync\n"
+       "Values come from " << kConfigFileName << " (bridge section); flags override them.\n\n"
+       "  --config <file>   config file (default: next to the executable, then the working dir)\n"
+       "  --port <n>        WebSocket/HTTP port               (bridge.port)\n"
+       "  --bind <addr>     listen address, 0.0.0.0 for LAN    (bridge.bind)\n"
+       "  --token <t>       required JamConnect auth token     (bridge.token)\n"
+       "  --bpm <bpm>       tempo only used if no Link session exists yet;\n"
+       "                    an existing session's tempo always wins (bridge.initialTempo)\n"
+       "  --quantum <q>     quantum for phase/launch           (bridge.quantum)\n"
+       "  --static <dir>    serve files over HTTP, repeatable  (bridge.static)\n"
+       "  --no-start-stop   disable Link start/stop sync       (bridge.startStopSync)\n"
        "  --quiet           no status line\n";
+}
+
+std::string dirOf(const std::string& path)
+{
+  const auto slash = path.find_last_of("/\\");
+  return slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
+}
+
+bool fileExists(const std::string& path)
+{
+  std::ifstream f(path);
+  return static_cast<bool>(f);
+}
+
+json loadConfig(const std::string& path)
+{
+  std::ifstream f(path);
+  if (!f)
+    throw std::runtime_error("cannot open config " + path);
+  try
+  {
+    return json::parse(f, nullptr, true, true);
+  }
+  catch (const std::exception& e)
+  {
+    throw std::runtime_error("invalid config " + path + ": " + e.what());
+  }
+}
+
+template <typename T>
+T requireValue(const json& section, const char* key)
+{
+  if (!section.contains(key) || section[key].is_null())
+    throw std::runtime_error(std::string("config: bridge.") + key + " is required");
+  try
+  {
+    return section[key].get<T>();
+  }
+  catch (const std::exception&)
+  {
+    throw std::runtime_error(std::string("config: bridge.") + key + " has the wrong type");
+  }
 }
 
 bool parseArgs(int argc, char** argv, Options& o)
 {
+  // First pass: find --config / --help.
+  for (int i = 1; i < argc; ++i)
+  {
+    const std::string a = argv[i];
+    if (a == "-h" || a == "--help")
+    {
+      printUsage();
+      return false;
+    }
+    if (a == "--config" && i + 1 < argc)
+      o.configPath = argv[i + 1];
+  }
+  if (o.configPath.empty())
+  {
+    const std::string besideExe = dirOf(argv[0]) + kConfigFileName;
+    o.configPath = fileExists(besideExe) ? besideExe : std::string(kConfigFileName);
+  }
+  o.config = loadConfig(o.configPath);
+  if (!o.config.contains("bridge") || !o.config["bridge"].is_object())
+    throw std::runtime_error("config: missing \"bridge\" section in " + o.configPath);
+  json& b = o.config["bridge"];
+
+  bool staticFromCli = false;
   for (int i = 1; i < argc; ++i)
   {
     const std::string a = argv[i];
@@ -63,29 +146,63 @@ bool parseArgs(int argc, char** argv, Options& o)
         throw std::runtime_error(std::string("missing value for ") + name);
       return argv[++i];
     };
-    if (a == "--port")
-      o.port = static_cast<unsigned short>(std::stoi(next("--port")));
+    if (a == "--config")
+      next("--config");
+    else if (a == "--port")
+      b["port"] = std::stoi(next("--port"));
     else if (a == "--bind")
-      o.bind = next("--bind");
+      b["bind"] = next("--bind");
     else if (a == "--token")
-      o.token = next("--token");
+      b["token"] = next("--token");
     else if (a == "--bpm")
-      o.bpm = std::stod(next("--bpm"));
+      b["initialTempo"] = std::stod(next("--bpm"));
     else if (a == "--quantum")
-      o.quantum = std::stod(next("--quantum"));
+      b["quantum"] = std::stod(next("--quantum"));
     else if (a == "--static")
-      o.staticRoots.push_back(next("--static"));
+    {
+      if (!staticFromCli)
+        b["static"] = json::array();
+      staticFromCli = true;
+      b["static"].push_back(next("--static"));
+    }
     else if (a == "--no-start-stop")
-      o.startStopSync = false;
+      b["startStopSync"] = false;
     else if (a == "--quiet")
       o.quiet = true;
-    else if (a == "-h" || a == "--help")
-    {
-      printUsage();
-      return false;
-    }
     else
       throw std::runtime_error("unknown argument " + a);
+  }
+
+  o.bind = requireValue<std::string>(b, "bind");
+  const int port = requireValue<int>(b, "port");
+  if (port <= 0 || port > 65535)
+    throw std::runtime_error("config: bridge.port out of range");
+  o.port = static_cast<unsigned short>(port);
+  o.token = requireValue<std::string>(b, "token");
+  o.tempoMin = requireValue<double>(b, "tempoMin");
+  o.tempoMax = requireValue<double>(b, "tempoMax");
+  o.bpm = requireValue<double>(b, "initialTempo");
+  if (!(o.bpm >= o.tempoMin && o.bpm <= o.tempoMax))
+    throw std::runtime_error("config: bridge.initialTempo outside tempoMin..tempoMax");
+  o.quantum = requireValue<double>(b, "quantum");
+  if (!(o.quantum > 0))
+    throw std::runtime_error("config: bridge.quantum must be > 0");
+  o.startStopSync = requireValue<bool>(b, "startStopSync");
+  o.stateIntervalMs = requireValue<int>(b, "stateIntervalMs");
+  o.pingIntervalMs = requireValue<int>(b, "pingIntervalMs");
+  o.authTimeoutMs = requireValue<int>(b, "authTimeoutMs");
+  o.statusIntervalMs = requireValue<int>(b, "statusIntervalMs");
+  o.maxMessageBytes = requireValue<std::size_t>(b, "maxMessageBytes");
+  o.sessionPrefix = requireValue<std::string>(b, "sessionPrefix");
+  if (o.stateIntervalMs <= 0 || o.pingIntervalMs <= 0 || o.authTimeoutMs <= 0
+      || o.statusIntervalMs <= 0 || o.maxMessageBytes == 0)
+    throw std::runtime_error("config: bridge intervals and maxMessageBytes must be > 0");
+
+  // Static roots are resolved relative to the config file.
+  for (const auto& r : requireValue<std::vector<std::string>>(b, "static"))
+  {
+    const bool absolute = !r.empty() && (r[0] == '/' || r[0] == '\\' || (r.size() > 1 && r[1] == ':'));
+    o.staticRoots.push_back(absolute || staticFromCli ? r : dirOf(o.configPath) + r);
   }
   return true;
 }
@@ -106,10 +223,14 @@ public:
     , mStateTimer(io)
     , mPingTimer(io)
     , mStatusTimer(io)
-    , mSessionId("LINK-" + std::to_string(opts.port))
+    , mSessionId(opts.sessionPrefix + std::to_string(opts.port))
   {
     for (const auto& r : opts.staticRoots)
       mServer.addStaticRoot(r);
+    mServer.setMaxMessageBytes(opts.maxMessageBytes);
+    mServer.onHttp = [this](const std::string& path, std::string& body, std::string& type) {
+      return serveRuntimeConfig(path, body, type);
+    };
 
     mServer.onOpen = [this](auto s) { onOpen(s); };
     mServer.onMessage = [this](auto s, const std::string& m) { onMessage(s, m); };
@@ -221,9 +342,28 @@ private:
     broadcast(legacyTransport(playing ? "started" : "stopped"));
   }
 
+  // GET /jamconnect.config.json: the client-facing parts of the loaded config plus
+  // runtime facts, so the web app never has to assume a port or URL.
+  bool serveRuntimeConfig(const std::string& path, std::string& body, std::string& type)
+  {
+    if (path != std::string("/") + kConfigFileName)
+      return false;
+    json out = json::object();
+    for (const char* section : {"client", "webrtc", "m4l"})
+      if (mOpts.config.contains(section))
+        out[section] = mOpts.config[section];
+    out["bridge"] = {{"port", mOpts.port}, {"quantum", mOpts.quantum},
+      {"tempoMin", mOpts.tempoMin}, {"tempoMax", mOpts.tempoMax}};
+    out["runtime"] = {{"servedByBridge", true}, {"sessionId", mSessionId},
+      {"tokenRequired", !mOpts.token.empty()}};
+    body = out.dump(2);
+    type = "application/json";
+    return true;
+  }
+
   void setTempo(double bpm)
   {
-    if (!(bpm >= 20.0 && bpm <= 999.0))
+    if (!(bpm >= mOpts.tempoMin && bpm <= mOpts.tempoMax))
       return;
     auto state = mLink.captureAppSessionState();
     state.setTempo(bpm, mLink.clock().micros());
@@ -255,8 +395,8 @@ private:
   {
     mSessions[s->id()] = s;
     log("client #" + std::to_string(s->id()) + " connected from " + s->remote());
-    // Unauthenticated sockets get 6 s, like JamConnect hosts.
-    auto timer = std::make_shared<asio::steady_timer>(mIo, seconds(6));
+    // Unauthenticated sockets are dropped after bridge.authTimeoutMs.
+    auto timer = std::make_shared<asio::steady_timer>(mIo, milliseconds(mOpts.authTimeoutMs));
     timer->async_wait([this, s, timer](std::error_code ec) {
       if (!ec && s->isOpen() && !s->authenticated)
       {
@@ -448,7 +588,7 @@ private:
 
   void scheduleState()
   {
-    mStateTimer.expires_after(milliseconds(100));
+    mStateTimer.expires_after(milliseconds(mOpts.stateIntervalMs));
     mStateTimer.async_wait([this](std::error_code ec) {
       if (ec)
         return;
@@ -459,7 +599,7 @@ private:
 
   void schedulePing()
   {
-    mPingTimer.expires_after(seconds(2));
+    mPingTimer.expires_after(milliseconds(mOpts.pingIntervalMs));
     mPingTimer.async_wait([this](std::error_code ec) {
       if (ec)
         return;
@@ -472,7 +612,7 @@ private:
 
   void scheduleStatus()
   {
-    mStatusTimer.expires_after(milliseconds(250));
+    mStatusTimer.expires_after(milliseconds(mOpts.statusIntervalMs));
     mStatusTimer.async_wait([this](std::error_code ec) {
       if (ec)
         return;

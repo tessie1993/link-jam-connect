@@ -1,11 +1,25 @@
 /* JamConnect Link web app: JamConnect sessions on top of Ableton Link. */
-(() => {
+(async () => {
   const $ = (id) => document.getElementById(id);
   const params = new URLSearchParams(location.search);
-  const servedByBridge = location.protocol.startsWith('http') && location.port === '20809';
-  const defaultBridge = servedByBridge ? `ws://${location.host}` : DEFAULT_BRIDGE_URL;
+  const SETTINGS_KEY = 'jclSettings';
 
-  const connector = new JamConnector('JamConnect Link Web', Tone, { followLink: true, quantum: 4 });
+  // ---------------------------------------------------------------- configuration
+  // jamconnect.config.json is served by the bridge (with runtime info such as the real
+  // port) or deployed next to the app. ?config=<url> points at another file.
+  let configError = '';
+  try {
+    await JamConnector.loadConfig(params.get('config') || 'jamconnect.config.json');
+  } catch (err) {
+    configError = `Config not loaded (${err.message}); using library fallbacks.`;
+  }
+  // User overrides from the settings panel (signaling server, ICE/TURN servers, bridge URL).
+  const savedSettings = (() => { try { return JSON.parse(localStorage[SETTINGS_KEY] || '{}'); } catch (_) { return {}; } })();
+  const config = JamConnector.configure(jamMergeConfig(JamConnector.config, savedSettings));
+  const defaultBridge = params.get('bridge') || jamBridgeUrl(config);
+
+  // Tempo always comes from the Link session or the user, never from a default.
+  const connector = new JamConnector(config.client.appName, Tone, { adoptTransportTempo: false });
   let liveSet = null;
 
   // ---------------------------------------------------------------- audio
@@ -47,8 +61,40 @@
   }
 
   // ---------------------------------------------------------------- inputs
-  $('local-url').value = params.get('bridge') || localStorage.jclBridge || defaultBridge;
-  $('host-bridge-url').value = $('local-url').value;
+  $('local-url').value = defaultBridge;
+  $('host-bridge-url').value = defaultBridge;
+  $('local-token').value = config.client.bridgeToken || '';
+  $('host-bridge-token').value = config.client.bridgeToken || '';
+  if (config.runtime && config.runtime.tokenRequired) {
+    $('local-token').placeholder = 'required by this bridge';
+    $('host-bridge-token').placeholder = 'required by this bridge';
+  }
+  $('tempo').min = config.client.tempoMin;
+  $('tempo').max = config.client.tempoMax;
+  const quantumSel = $('quantum');
+  if (![...quantumSel.options].some((o) => Number(o.value) === config.client.quantum)) {
+    quantumSel.add(new Option(String(config.client.quantum)));
+  }
+  quantumSel.value = String(config.client.quantum);
+  if (configError) showError(configError);
+
+  // ---------------------------------------------------------------- settings panel
+  $('set-bridge-url').value = savedSettings.client && savedSettings.client.bridgeUrl || '';
+  $('set-signal').value = JSON.stringify(config.webrtc.signal || {}, null, 1);
+  $('set-ice').value = JSON.stringify(config.webrtc.iceServers || [], null, 1);
+  $('settings-save').addEventListener('click', () => {
+    try {
+      const next = {
+        client: { bridgeUrl: $('set-bridge-url').value.trim() },
+        webrtc: { signal: JSON.parse($('set-signal').value || '{}'), iceServers: JSON.parse($('set-ice').value || '[]') }
+      };
+      localStorage[SETTINGS_KEY] = JSON.stringify(next);
+      location.reload();
+    } catch (err) {
+      showError(`Settings: ${err.message}`);
+    }
+  });
+  $('settings-reset').addEventListener('click', () => { delete localStorage[SETTINGS_KEY]; location.reload(); });
   $('user-name').value = localStorage.jclName || `jammer-${Math.floor(Math.random() * 900 + 100)}`;
   $('user-name').addEventListener('change', () => { localStorage.jclName = $('user-name').value; });
 
@@ -61,7 +107,6 @@
   // ---------------------------------------------------------------- connect
   $('local-connect').addEventListener('click', (e) => guarded(e.target, async () => {
     const url = $('local-url').value.trim();
-    localStorage.jclBridge = url;
     await connector.joinLocalBridge(url, $('local-token').value.trim(), userName());
     log(`joined Link bridge ${url}`);
   }));
@@ -149,17 +194,20 @@
   $('play-btn').addEventListener('click', async () => {
     await Tone.start();
     const st = connector.getLinkState();
+    if (st.tempo === null && !st.upstream) { showError('Enter a tempo first.'); return; }
     if (!connector.setLinkPlaying(!st.isPlaying)) showError('Connect to a bridge or session first.');
   });
 
   function sendTempo(bpm) {
-    if (!(bpm >= 20 && bpm <= 999)) return;
+    if (!(bpm >= config.client.tempoMin && bpm <= config.client.tempoMax)) return;
     if (!connector.setLinkTempo(bpm)) showError('Connect to a bridge or session first.');
   }
   $('tempo').addEventListener('change', (e) => sendTempo(parseFloat(e.target.value)));
   $('tempo').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
   document.querySelectorAll('[data-nudge]').forEach((b) => b.addEventListener('click', () => {
-    sendTempo(Math.round(connector.getLinkState().tempo) + Number(b.dataset.nudge));
+    const current = connector.getLinkState().tempo;
+    if (current === null) return;
+    sendTempo(Math.round(current) + Number(b.dataset.nudge));
   }));
   $('quantum').addEventListener('change', (e) => { connector.setLinkQuantum(Number(e.target.value)); buildPhaseBar(); });
 
@@ -177,8 +225,8 @@
 
   function frame() {
     const st = connector.getLinkState();
-    const has = !!st.source;
-    if (document.activeElement !== $('tempo')) $('tempo').value = st.tempo.toFixed(2);
+    const has = !!st.source && st.tempo !== null;
+    if (document.activeElement !== $('tempo')) $('tempo').value = st.tempo !== null ? st.tempo.toFixed(2) : '';
     const cells = $('phase-bar').children;
     const ph = Math.floor(st.phase);
     for (let i = 0; i < cells.length; i++) {

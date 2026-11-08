@@ -57,10 +57,16 @@ client on receipt at local time now:
     if pgt: data += (gt + pgt) / 2 - ht
 ```
 
-The client pings every 25 ms until it has 100 data points. The offset is
-their **median**. Bursts repeat every 5 s. The first estimate is published
-after 6 points so the UI can lock on quickly. Any JamConnect node answers
-`LINK_PING`, so the same code runs over WebSocket and WebRTC.
+The client sends a ping every `client.linkClock.pingSpacingMs` until it has
+`measurePoints` data points. The offset is their **median**. Bursts repeat every
+`remeasureMs`. The first estimate is published after `minPoints` points so the UI
+can lock on quickly (defaults in `jamconnect.config.json`: 25 ms, 100, 5 s, 6). Any
+JamConnect node answers `LINK_PING`, so the same code runs over WebSocket and WebRTC.
+
+Like Link and NTP, the exchange assumes equal delay in both directions. Jitter is
+filtered by the median. A *constant* asymmetry between the up and down paths
+shows up as an offset error of half the difference. On localhost and LAN this is
+negligible. Over the internet it bounds WebRTC guest accuracy.
 
 ## Timeline state
 

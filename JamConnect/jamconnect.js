@@ -8,27 +8,82 @@
  * WebRTC host. Clock sync uses Link's measurement algorithm.
  */
 //
-const DEFAULT_ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' }
-];
+// Configuration: every tunable lives in jamconnect.config.json (same shape as below).
+// Load it with JamConnector.loadConfig() / JamConnector.configure(), or pass
+// { config } to the constructor. These fallbacks only keep existing JamConnect apps
+// (which pass no config) working exactly as before.
+const JAMCONNECT_FALLBACK_CONFIG = {
+  bridge: { bind: '127.0.0.1', port: 20809, quantum: 4, tempoMin: 20, tempoMax: 999 },
+  client: {
+    appName: 'JamConnect',
+    bridgeUrl: '',
+    bridgeToken: '',
+    followLink: false,
+    quantum: 4,
+    tempoMin: 20,
+    tempoMax: 999,
+    bridgeConnectTimeoutMs: 6000,
+    joinTimeoutMs: 12000,
+    guestAuthTimeoutMs: 6000,
+    pingIntervalMs: 10000,
+    heartbeatIntervalMs: 10000,
+    hostStateIntervalMs: 250,
+    followIntervalMs: 50,
+    followMaxDriftMs: 8,
+    followStartLeadMs: 30,
+    paramChangeBufferMs: 30,
+    startDelaySec: 0.015,
+    // Original JamConnect (Tone.js transport) timing knobs
+    legacy: { fallbackRttMs: 20, padDelayMs: 20, startOffsetSec: 0.02, heartbeatMaxDriftSec: 0.025, rejectCloseDelayMs: 150, clockSamples: 8, localStartOffset: '+0.5' },
+    // Link measurement: data points per burst, median (ableton/link/Measurement.hpp)
+    linkClock: { measurePoints: 100, minPoints: 6, pingSpacingMs: 0, remeasureMs: 5000, bestRttFraction: 1 }
+  },
+  webrtc: {
+    peerPrefix: 'jam-',
+    sessionPrefix: 'JAM-',
+    sessionCodeLength: 4,
+    guestCodeLength: 5,
+    tokenLength: 8,
+    codeAlphabet: '23456789ABCDEFGHJKLMNPQRSTUVWXYZ',
+    tokenAlphabet: '23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz',
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' }
+    ],
+    signal: {}
+  },
+  runtime: {}
+};
 
-const PEER_PREFIX = 'jam-';
-const PING_INTERVAL = 10000;
-const HEARTBEAT_INTERVAL = 10000;
-const START_DELAY = 0.015;
-const PARAM_CHANGE_BUFFER_TIME = 30;
+function jamIsObject(v) {
+  return v && typeof v === 'object' && !Array.isArray(v);
+}
 
-const DEFAULT_BRIDGE_URL = 'ws://127.0.0.1:20809';
+function jamMergeConfig(base, over) {
+  const out = { ...base };
+  for (const [k, v] of Object.entries(over || {})) {
+    out[k] = jamIsObject(v) && jamIsObject(base[k]) ? jamMergeConfig(base[k], v) : v;
+  }
+  return out;
+}
+
+let JAMCONNECT_CONFIG = jamMergeConfig(
+  JAMCONNECT_FALLBACK_CONFIG,
+  (typeof globalThis !== 'undefined' && globalThis.JAMCONNECT_CONFIG) || {}
+);
+
+/** Bridge WebSocket URL from config: explicit client.bridgeUrl, the page that served us, or bridge bind/port. */
+function jamBridgeUrl(cfg = JAMCONNECT_CONFIG) {
+  if (cfg.client && cfg.client.bridgeUrl) return cfg.client.bridgeUrl;
+  if (cfg.runtime && cfg.runtime.servedByBridge && typeof location !== 'undefined') {
+    return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;
+  }
+  const bind = cfg.bridge.bind === '0.0.0.0' || cfg.bridge.bind === '::' ? '127.0.0.1' : cfg.bridge.bind;
+  return `ws://${bind}:${cfg.bridge.port}`;
+}
+
 const BRIDGE_PEER_ID = 'BRIDGE';
-// Link measurement: 100 data points per burst, median (ableton/link/Measurement.hpp)
-const LINK_MEASURE_POINTS = 100;
-const LINK_MEASURE_MIN_POINTS = 6;
-const LINK_PING_SPACING_MS = 25;
-const LINK_REMEASURE_MS = 5000;
-const LINK_HOST_STATE_INTERVAL = 250;
-const LINK_FOLLOW_INTERVAL = 50;
 // Messages that are point-to-point and never relayed between hops.
 const JAM_LOCAL_MESSAGE_TYPES = new Set([
   'AUTH_HELLO', 'AUTH_OK', 'AUTH_REJECTED', 'PING', 'PONG', 'CLOCK_SYNC',
@@ -46,16 +101,33 @@ function linkMedian(values) {
 }
 
 /**
+ * Median of the offsets, optionally restricted to the fastest exchanges.
+ * bestRttFraction = 1 is exactly Link's filter; < 1 drops samples inflated by
+ * queueing (ordered WebRTC data channels, busy links) before taking the median.
+ */
+function linkOffsetEstimate(samples, bestRttFraction) {
+  let use = samples;
+  if (bestRttFraction > 0 && bestRttFraction < 1 && samples.length > 3) {
+    const keep = Math.max(3, Math.ceil(samples.length * bestRttFraction));
+    use = samples.slice().sort((a, b) => a.rtt - b.rtt).slice(0, keep);
+  }
+  return linkMedian(use.map((s) => s.offset));
+}
+
+/**
  * Estimates offset = remoteClock - localClock (µs) towards one upstream node with
  * the Link ping/pong measurement: two data points per exchange, median filter.
+ * Like Link, the next ping is only sent once the previous pong arrived.
  */
 class JamLinkClock {
-  constructor(send) {
+  constructor(send, options = JAMCONNECT_CONFIG.client.linkClock) {
     this._send = send;
+    this._opts = { ...JAMCONNECT_CONFIG.client.linkClock, ...options };
     this._data = [];
     this._prevGhost = 0;
     this._timer = null;
     this._burstTimer = null;
+    this._bursting = false;
     this.offsetUs = 0;
     this.ready = false;
     this.measurements = 0;
@@ -65,29 +137,25 @@ class JamLinkClock {
   start() {
     this.stop();
     this._burst();
-    this._timer = setInterval(() => this._burst(), LINK_REMEASURE_MS);
+    this._timer = setInterval(() => this._burst(), this._opts.remeasureMs);
   }
 
   stop() {
     if (this._timer) clearInterval(this._timer);
-    if (this._burstTimer) clearInterval(this._burstTimer);
+    if (this._burstTimer) clearTimeout(this._burstTimer);
     this._timer = null;
     this._burstTimer = null;
+    this._bursting = false;
   }
 
   _burst() {
-    if (this._burstTimer) clearInterval(this._burstTimer);
+    // A new burst also recovers from a lost pong in the previous one.
+    if (this._burstTimer) clearTimeout(this._burstTimer);
+    this._burstTimer = null;
     this._data = [];
     this._prevGhost = 0;
+    this._bursting = true;
     this._ping();
-    this._burstTimer = setInterval(() => {
-      if (this._data.length >= LINK_MEASURE_POINTS) {
-        clearInterval(this._burstTimer);
-        this._burstTimer = null;
-        return;
-      }
-      this._ping();
-    }, LINK_PING_SPACING_MS);
   }
 
   _ping() {
@@ -99,17 +167,29 @@ class JamLinkClock {
     const gt = Number(msg.gt) || 0;
     const ht = Number(msg.ht) || 0;
     const pgt = Number(msg.pgt) || 0;
-    if (!gt || !ht) return;
-    this._data.push(gt - (now + ht) / 2);
-    if (pgt) this._data.push((gt + pgt) / 2 - ht);
+    if (!gt || !ht || !this._bursting) return;
+    const rtt = now - ht;
+    this._data.push({ offset: gt - (now + ht) / 2, rtt });
+    if (pgt) this._data.push({ offset: (gt + pgt) / 2 - ht, rtt });
     this._prevGhost = gt;
-    const complete = this._data.length >= LINK_MEASURE_POINTS;
+    const complete = this._data.length >= this._opts.measurePoints;
     // First burst publishes early so clients lock quickly; later bursts only when complete.
-    if (complete || (!this.ready && this._data.length >= LINK_MEASURE_MIN_POINTS)) {
-      this.offsetUs = linkMedian(this._data);
+    if (complete || (!this.ready && this._data.length >= this._opts.minPoints)) {
+      this.offsetUs = linkOffsetEstimate(this._data, this._opts.bestRttFraction);
       if (complete) this.measurements++;
       this.ready = true;
       if (this.onUpdate) this.onUpdate(this.offsetUs);
+    }
+    if (complete) {
+      this._bursting = false;
+    } else if (!(this._opts.pingSpacingMs > 0)) {
+      // Link behaviour: next ping right away. Only then does the second data point,
+      // (gt + pgt)/2 - ht, hold (our send time sits midway between gt_prev and gt).
+      this._ping();
+    } else {
+      // Spaced pings: the midpoint assumption breaks, so drop the second data point.
+      this._prevGhost = 0;
+      this._burstTimer = setTimeout(() => this._ping(), this._opts.pingSpacingMs);
     }
   }
 
@@ -122,8 +202,11 @@ class JamLinkClock {
  * Mirrors ableton::link::Timeline + StartStopState.
  */
 class JamLinkTimeline {
-  constructor(bpm = 120, quantum = 4) {
-    this.tempo = bpm;
+  // No default tempo: it comes from the Link session (bridge), the host, or the app.
+  constructor(bpm = null, quantum = JAMCONNECT_CONFIG.client.quantum,
+    tempoRange = { min: JAMCONNECT_CONFIG.client.tempoMin, max: JAMCONNECT_CONFIG.client.tempoMax }) {
+    this.tempoRange = tempoRange;
+    this.tempo = this.validTempo(bpm) ? bpm : null;
     this.beat = 0;
     this.atUs = nowUs();
     this.quantum = quantum;
@@ -136,24 +219,26 @@ class JamLinkTimeline {
     this.source = null; // 'bridge' | 'host' | null (no timeline yet)
   }
 
-  beatAtTime(us) { return this.beat + (us - this.atUs) * this.tempo / 60e6; }
+  get hasTempo() { return this.tempo !== null; }
+  validTempo(bpm) { return typeof bpm === 'number' && bpm >= this.tempoRange.min && bpm <= this.tempoRange.max; }
+  beatAtTime(us) { return this.hasTempo ? this.beat + (us - this.atUs) * this.tempo / 60e6 : this.beat; }
   phaseAtTime(us, q = this.quantum) {
     const b = this.beatAtTime(us);
     return ((b % q) + q) % q;
   }
-  timeAtBeat(beat) { return this.atUs + (beat - this.beat) * 60e6 / this.tempo; }
+  timeAtBeat(beat) { return this.hasTempo ? this.atUs + (beat - this.beat) * 60e6 / this.tempo : this.atUs; }
   songBeatAtTime(us) { return this.beatAtTime(us) - this.playBeat; }
 
   // ---- authority operations (used when this node owns the timeline) ----
   setTempo(bpm, atUs = nowUs()) {
-    if (!(bpm >= 20 && bpm <= 999)) return;
+    if (!this.validTempo(bpm)) return;
     this.beat = this.beatAtTime(atUs);
     this.atUs = atUs;
     this.tempo = bpm;
   }
 
   setPlaying(playing, atUs = nowUs(), quantum = this.quantum, quantize = false) {
-    if (playing === this.isPlaying) return;
+    if (playing === this.isPlaying || !this.hasTempo) return;
     this.isPlaying = playing;
     if (playing) {
       if (quantize) {
@@ -177,7 +262,8 @@ class JamLinkTimeline {
   // ---- wire format: times expressed in the sender's clock ----
   applyWire(msg, clock) {
     const toLocal = (us) => (clock ? clock.toLocalUs(us) : us);
-    this.tempo = Number(msg.tempo) || this.tempo;
+    const tempo = Number(msg.tempo);
+    if (this.validTempo(tempo)) this.tempo = tempo;
     this.beat = Number(msg.beat) || 0;
     this.atUs = toLocal(Number(msg.atUs) || 0);
     this.quantum = Number(msg.quantum) || this.quantum;
@@ -231,7 +317,7 @@ class JamLinkTimeline {
  * DataConnection (on/send/close/open), so the guest code path is shared.
  */
 class LocalBridgeConnection {
-  constructor(url = DEFAULT_BRIDGE_URL, metadata = {}) {
+  constructor(url = jamBridgeUrl(), metadata = {}) {
     this.peer = BRIDGE_PEER_ID;
     this.url = url;
     this.metadata = metadata;
@@ -274,7 +360,7 @@ class LocalBridgeConnection {
   }
 }
 
-function generateRandomCode(length = 6, alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ') {
+function generateRandomCode(length, alphabet = JAMCONNECT_CONFIG.webrtc.codeAlphabet) {
   const bytes = new Uint8Array(length);
   const cryptoApi = (typeof crypto !== 'undefined') ? crypto : null;
   if (cryptoApi && cryptoApi.getRandomValues) {
@@ -294,7 +380,10 @@ class JamConnector {
     this.appName = appName;
     this.Tone = toneInstance;
     this.isHost = false;
-    this.signalConfig = options.signalConfig || {}; // Optional custom PeerJS host/port/path
+    // Per-instance config = global config (jamconnect.config.json) + options.config overrides.
+    this.config = jamMergeConfig(JAMCONNECT_CONFIG, options.config || {});
+    // Optional custom PeerJS host/port/path/key (options.signalConfig kept for compatibility)
+    this.signalConfig = { ...(this.config.webrtc.signal || {}), ...(options.signalConfig || {}) };
     this.logger = new Logger(this);
     this.enableLogging = options.enableLogging || false;
     this.logger.log("JamConnector: Logging = " + this.enableLogging);
@@ -347,9 +436,11 @@ class JamConnector {
     this.transport = 'webrtc';          // 'webrtc' | 'local' (guest of a jamlink-bridge)
     this.bridgeConn = null;             // host-side upstream to a local bridge (attachLocalBridge)
     this.bridgeUrl = null;
-    this.linkTimeline = new JamLinkTimeline(120, options.quantum || 4);
+    this.linkTimeline = new JamLinkTimeline(options.bpm, options.quantum || this.config.client.quantum,
+      { min: this.config.client.tempoMin, max: this.config.client.tempoMax });
     this.linkClocks = new Map();        // upstream peerId -> JamLinkClock
-    this.followLink = !!options.followLink; // drive Tone.Transport from the Link timeline
+    this.followLink = options.followLink !== undefined ? !!options.followLink : !!this.config.client.followLink; // drive Tone.Transport from the Link timeline
+    this.adoptTransportTempo = options.adoptTransportTempo !== false; // host w/o bridge: start from the app's Tone tempo
     this._linkHostTimer = null;
     this._linkFollowTimer = null;
     this.onLinkStateUpdated = null;     // (snapshot) => void
@@ -357,6 +448,27 @@ class JamConnector {
     this.onBridgeStateChange = null;    // ({ status, url, message }) => void
     this.onRelayMessage = null;         // (msg, senderId) => void, for app-specific messages (LIVE_*, ...)
   }
+
+  // ==========================================
+  // CONFIGURATION
+  // ==========================================
+
+  /** Replace the global configuration (affects connectors created afterwards). */
+  static configure(config) {
+    JAMCONNECT_CONFIG = jamMergeConfig(JAMCONNECT_FALLBACK_CONFIG, config || {});
+    return JAMCONNECT_CONFIG;
+  }
+
+  /** Fetch jamconnect.config.json (served by the bridge or deployed with the app) and apply it. */
+  static async loadConfig(url = 'jamconnect.config.json') {
+    const res = await fetch(url, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`Cannot load ${url}: HTTP ${res.status}`);
+    return JamConnector.configure(await res.json());
+  }
+
+  static get config() { return JAMCONNECT_CONFIG; }
+
+  bridgeUrlFromConfig() { return jamBridgeUrl(this.config); }
 
   // ==========================================
   // SESSION LINK & CREDENTIAL HELPERS
@@ -435,16 +547,17 @@ class JamConnector {
     this.disconnect();
     this.isHost = true;
 
-    this.sessionId = existingSessionId || `JAM-${generateRandomCode(4)}`;
-    this.authToken = existingAuthToken || generateRandomCode(8, '23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz');
-    const fullPeerId = `${PEER_PREFIX}${this.sessionId}`;
+    const rtc = this.config.webrtc;
+    this.sessionId = existingSessionId || `${rtc.sessionPrefix}${generateRandomCode(rtc.sessionCodeLength, rtc.codeAlphabet)}`;
+    this.authToken = existingAuthToken || generateRandomCode(rtc.tokenLength, rtc.tokenAlphabet);
+    const fullPeerId = `${rtc.peerPrefix}${this.sessionId}`;
 
     this._emitConnectionState('connecting', 'Registering session on signaling server...');
 
     return new Promise((resolve, reject) => {
       const peerOptions = {
         debug: 1,
-        config: { iceServers: DEFAULT_ICE_SERVERS },
+        config: { iceServers: this.config.webrtc.iceServers },
         ...this.signalConfig
       };
 
@@ -515,7 +628,7 @@ class JamConnector {
   }
 
   _handleIncomingGuestConnection(conn) {
-    const peerId = conn.peer || ('guest_' + generateRandomCode(4));
+    const peerId = conn.peer || ('guest_' + generateRandomCode(this.config.webrtc.guestCodeLength, this.config.webrtc.codeAlphabet));
     const metaToken = conn.metadata && conn.metadata.authToken;
     const guestName = (conn.metadata && conn.metadata.name) || `Jammer-${peerId.slice(-4)}`;
     const guestAppName = (conn.metadata && conn.metadata.appName) || 'unknown';
@@ -545,7 +658,7 @@ class JamConnector {
         conn.close();
         this.peers.delete(peerId);
       }
-    }, 6000);
+    }, this.config.client.guestAuthTimeoutMs);
 
     conn.on('open', () => {
       if (peerRecord.authenticated) {
@@ -565,7 +678,7 @@ class JamConnector {
         } else {
           clearTimeout(authTimeout);
           this._sendTo(conn, { type: 'AUTH_REJECTED', reason: 'Invalid session auth token' });
-          setTimeout(() => conn.close(), 150);
+          setTimeout(() => conn.close(), this.config.client.legacy.rejectCloseDelayMs);
           this.peers.delete(peerId);
         }
         return;
@@ -610,7 +723,7 @@ class JamConnector {
     });
 
     this._measureClockOffset(conn);
-    if (this.linkTimeline.source) {
+    if (this.linkTimeline.source && this.linkTimeline.hasTempo) {
       this._sendTo(conn, this.linkTimeline.toWire());
     }
     this._broadcastPeerList();
@@ -639,15 +752,16 @@ class JamConnector {
     this.sessionId = parsed.sessionId;
     this.authToken = parsed.authToken;
 
-    const targetHostPeerId = `${PEER_PREFIX}${this.sessionId}`;
-    const myGuestId = `${PEER_PREFIX}guest-${generateRandomCode(5)}`;
+    const rtc = this.config.webrtc;
+    const targetHostPeerId = `${rtc.peerPrefix}${this.sessionId}`;
+    const myGuestId = `${rtc.peerPrefix}guest-${generateRandomCode(rtc.guestCodeLength, rtc.codeAlphabet)}`;
 
     this._emitConnectionState('connecting', `Joining session ${this.sessionId}...`);
 
     return new Promise((resolve, reject) => {
       const peerOptions = {
         debug: 1,
-        config: { iceServers: DEFAULT_ICE_SERVERS },
+        config: { iceServers: this.config.webrtc.iceServers },
         ...this.signalConfig
       };
 
@@ -663,7 +777,7 @@ class JamConnector {
           this._emitConnectionState('error', err.message);
           reject(err);
         }
-      }, 12000);
+      }, this.config.client.joinTimeoutMs);
 
       peer.on('open', () => {
         const name = guestName || `${this.appName}-${myGuestId.slice(-4)}`;
@@ -775,14 +889,14 @@ class JamConnector {
    * LOCAL mode: join a jamlink-bridge on this machine (or LAN) as a JamConnect guest.
    * The bridge is a real Ableton Link peer; tempo/beat/start-stop come from Link.
    */
-  async joinLocalBridge(url = DEFAULT_BRIDGE_URL, authToken = '', guestName = '') {
+  async joinLocalBridge(url = this.bridgeUrlFromConfig(), authToken = this.config.client.bridgeToken, guestName = '') {
     this.disconnect();
     this.isHost = false;
     this.transport = 'local';
     this.bridgeUrl = url;
     this.sessionId = 'LINK';
     this.authToken = authToken || '';
-    const name = guestName || `${this.appName}-${generateRandomCode(4)}`;
+    const name = guestName || `${this.appName}-${generateRandomCode(this.config.webrtc.sessionCodeLength, this.config.webrtc.codeAlphabet)}`;
 
     this._emitConnectionState('connecting', `Connecting to JamLink bridge ${url}...`);
 
@@ -795,7 +909,7 @@ class JamConnector {
         const err = new Error(`JamLink bridge at ${url} did not answer`);
         this._emitConnectionState('error', err.message);
         reject(err);
-      }, 6000);
+      }, this.config.client.bridgeConnectTimeoutMs);
 
       let conn;
       try {
@@ -826,7 +940,7 @@ class JamConnector {
    * WebRTC guests get the Ableton Link timeline and can control Live.
    * Call after createHostSession() (which resets connections).
    */
-  async attachLocalBridge(url = DEFAULT_BRIDGE_URL, authToken = '') {
+  async attachLocalBridge(url = this.bridgeUrlFromConfig(), authToken = this.config.client.bridgeToken) {
     this.detachLocalBridge();
     this.bridgeUrl = url;
     const name = `${this.appName}-host`;
@@ -836,7 +950,7 @@ class JamConnector {
       let settled = false;
       const conn = new LocalBridgeConnection(url, { authToken, name, appName: this.appName });
       this.bridgeConn = conn;
-      const timeout = setTimeout(() => fail(new Error(`JamLink bridge at ${url} did not answer`)), 6000);
+      const timeout = setTimeout(() => fail(new Error(`JamLink bridge at ${url} did not answer`)), this.config.client.bridgeConnectTimeoutMs);
       const fail = (err) => {
         clearTimeout(timeout);
         if (this.bridgeConn === conn) this.detachLocalBridge();
@@ -879,6 +993,8 @@ class JamConnector {
       try { conn.close(); } catch (_) {}
       this._stopLinkClock(BRIDGE_PEER_ID);
       this._emitBridgeState('idle', 'Bridge detached');
+      // Keep guests on a timeline: the host takes over (pure JamConnect session).
+      if (this.isHost && this.peer) this._becomeLinkAuthority();
     }
   }
 
@@ -898,7 +1014,7 @@ class JamConnector {
 
   _startLinkClock(peerId, conn) {
     this._stopLinkClock(peerId);
-    const clock = new JamLinkClock((m) => this._sendTo(conn, m));
+    const clock = new JamLinkClock((m) => this._sendTo(conn, m), this.config.client.linkClock);
     clock.onUpdate = (offsetUs) => {
       if (this.onLinkClockUpdated) this.onLinkClockUpdated({ peerId, offsetUs });
     };
@@ -951,7 +1067,8 @@ class JamConnector {
   _becomeLinkAuthority() {
     const tl = this.linkTimeline;
     if (tl.source !== 'host') {
-      tl.setTempo(this.Tone ? this.Tone.Transport.bpm.value : tl.tempo);
+      // Adopt the app's own transport tempo if the timeline has none yet.
+      if (!tl.hasTempo && this.Tone && this.adoptTransportTempo) tl.setTempo(this.Tone.Transport.bpm.value);
       tl.source = 'host';
       tl.linkEnabled = false;
       tl.numPeers = 0;
@@ -963,8 +1080,8 @@ class JamConnector {
         this._linkHostTimer = null;
         return;
       }
-      this.broadcast(this.linkTimeline.toWire(), null, false);
-    }, LINK_HOST_STATE_INTERVAL);
+      if (this.linkTimeline.hasTempo) this.broadcast(this.linkTimeline.toWire(), null, false);
+    }, this.config.client.hostStateIntervalMs);
     this._startLinkFollow();
     this._notifyLinkState();
   }
@@ -1009,6 +1126,7 @@ class JamConnector {
       }
       default: return;
     }
+    if (!tl.hasTempo) return;
     this.broadcast(tl.toWire(), null, false);
     this._notifyLinkState();
   }
@@ -1043,7 +1161,7 @@ class JamConnector {
 
   _startLinkFollow() {
     if (!this.followLink || this._linkFollowTimer) return;
-    this._linkFollowTimer = setInterval(() => this._followLinkTick(), LINK_FOLLOW_INTERVAL);
+    this._linkFollowTimer = setInterval(() => this._followLinkTick(), this.config.client.followIntervalMs);
   }
 
   _stopLinkFollow() {
@@ -1067,7 +1185,7 @@ class JamConnector {
   _followLinkTick() {
     const Tone = this.Tone;
     const tl = this.linkTimeline;
-    if (!Tone || !tl.source || !this.followLink) return;
+    if (!Tone || !tl.source || !tl.hasTempo || !this.followLink) return;
     const transport = Tone.Transport;
     if (Math.abs(transport.bpm.value - tl.tempo) > 0.001) {
       transport.bpm.value = tl.tempo;
@@ -1083,7 +1201,7 @@ class JamConnector {
           transport.ticks = 0;
           transport.start(this._audioTimeForPerfMs(playMs), 0);
         } else {
-          const startMs = nowMs + 30;
+          const startMs = nowMs + this.config.client.followStartLeadMs;
           const startTicks = Math.max(0, tl.songBeatAtTime(startMs * 1000) * ppq);
           transport.start(this._audioTimeForPerfMs(startMs), `${Math.round(startTicks)}i`);
         }
@@ -1092,7 +1210,7 @@ class JamConnector {
       // Transport.ticks reports the position at Tone.now() (= now + lookAhead).
       const expected = tl.songBeatAtTime((nowMs + lookAheadMs) * 1000) * ppq;
       const drift = transport.ticks - expected;
-      if (expected >= 0 && Math.abs(drift) > ppq * (tl.tempo / 60) * 0.008) {
+      if (expected >= 0 && Math.abs(drift) > ppq * (tl.tempo / 60) * (this.config.client.followMaxDriftMs / 1000)) {
         transport.ticks = Math.round(expected);
       }
     } else if (transport.state === 'started') {
@@ -1172,13 +1290,13 @@ class JamConnector {
           this.logger.warn("Peer connection closed", peer);
         }
       }
-    }, PING_INTERVAL);
+    }, this.config.client.pingIntervalMs);
 
     /*
       // Send Transport phase/ticks heartbeat every 2 seconds while playing
       this._heartbeatInterval = setInterval(() => {
         this.resync();
-      }, HEARTBEAT_INTERVAL);
+      }, this.config.client.heartbeatIntervalMs);
     */
   }
 
@@ -1262,7 +1380,7 @@ class JamConnector {
           if (peer) {
             peer.rtt = rtt;
             peer.samples.push({ rtt, offset });
-            if (peer.samples.length > 8) peer.samples.shift();
+            if (peer.samples.length > this.config.client.legacy.clockSamples) peer.samples.shift();
             // Use the sample with minimum RTT for highest clock accuracy
             const bestSample = peer.samples.reduce((a, b) => (a.rtt <= b.rtt ? a : b));
             peer.timeOffset = bestSample.offset;
@@ -1380,7 +1498,7 @@ class JamConnector {
       case 'PAD_PLAY':
         if (!this.permissions.syncMidi) return;
         if (this.onPadTriggered) {
-          const delaySec = Math.max(0, (msg.delayFromSendMs || 20) - (this.rtt / 2)) / 1000;
+          const delaySec = Math.max(0, (msg.delayFromSendMs || this.config.client.legacy.padDelayMs) - (this.rtt / 2)) / 1000;
           const playTime = this.Tone.now() + delaySec;
           this.onPadTriggered(msg.appName, msg.instrument, msg.note, msg.velocity, playTime, msg.extra);
         }
@@ -1420,7 +1538,7 @@ class JamConnector {
       this.Tone.Transport.swing = msg.swing;
     }
 
-    const transitSec = Math.max(0, (this.rtt || 20) / 2) / 1000;
+    const transitSec = Math.max(0, (this.rtt || this.config.client.legacy.fallbackRttMs) / 2) / 1000;
     
     if (msg.state === 'started' || msg.transportState === 'started') {
       const targetSeconds = (typeof msg.seconds === 'number' ? msg.seconds : 0) + transitSec;
@@ -1428,7 +1546,7 @@ class JamConnector {
         this.Tone.Transport.seconds = targetSeconds;
         const startOffset = typeof msg.delaySec === 'number'
           ? Math.max(0, msg.delaySec - transitSec)
-          : 0.02;
+          : this.config.client.legacy.startOffsetSec;
         this.Tone.Transport.start(`+${startOffset}`);
       } else if (typeof msg.ticks === 'number') {
         this.Tone.Transport.ticks = msg.ticks;
@@ -1449,11 +1567,11 @@ class JamConnector {
       this.Tone.Transport.start();
       return;
     }
-    const transitSec = Math.max(0, (this.rtt || 20) / 2) / 1000;
+    const transitSec = Math.max(0, (this.rtt || this.config.client.legacy.fallbackRttMs) / 2) / 1000;
     const expectedSeconds = (msg.seconds || 0) + transitSec;
     const drift = Math.abs(this.Tone.Transport.seconds - expectedSeconds);
     // Re-align if phase drift exceeds 25ms
-    if (drift > 0.025) {
+    if (drift > this.config.client.legacy.heartbeatMaxDriftSec) {
       this.Tone.Transport.seconds = expectedSeconds;
     }
   }
@@ -1518,7 +1636,7 @@ class JamConnector {
     }
 
     this.Tone.Transport.bpm.value = bpm;
-    const delaySec = START_DELAY; // 80ms lookahead for tight simultaneous start
+    const delaySec = this.config.client.startDelaySec; // lookahead for tight simultaneous start
     const futureStartTime = this.Tone.now() + delaySec;
     this.Tone.Transport.seconds = 0;
     this.Tone.Transport.ticks = 0;
@@ -1622,7 +1740,7 @@ class JamConnector {
   sendDeviceParameterChange(param, value, normalizedValue = null) {
     
     let delta = performance.now() - this._lastParamChangeTime;
-    if (delta < PARAM_CHANGE_BUFFER_TIME) {
+    if (delta < this.config.client.paramChangeBufferMs) {
       this._paramChangeBuffer.push({param: param, value: value});
       setTimeout(() => {
         this.broadcast({
@@ -1633,7 +1751,7 @@ class JamConnector {
         this.logger.log("sendDeviceParameterChange: sent buffer", this._paramChangeBuffer);
         this._paramChangeBuffer = [];
         
-      }, 30);
+      }, this.config.client.paramChangeBufferMs);
       this.logger.log("sendDeviceParameterChange: buffered change");
     }
     else {
@@ -2184,14 +2302,14 @@ class JamConnectClient {
   }
 
   /** Local mode: connect straight to a jamlink-bridge (Ableton Link). */
-  async joinLocalBridge(url = DEFAULT_BRIDGE_URL, token = '') {
+  async joinLocalBridge(url = this.connector.bridgeUrlFromConfig(), token = this.connector.config.client.bridgeToken) {
     await this.connector.joinLocalBridge(url, token);
     this._userRole = JamConnectUserRoles.Guest;
     this.stateChanged();
   }
 
   /** WebRTC host: relay the local bridge's Link session to remote guests. */
-  async attachLocalBridge(url = DEFAULT_BRIDGE_URL, token = '') {
+  async attachLocalBridge(url = this.connector.bridgeUrlFromConfig(), token = this.connector.config.client.bridgeToken) {
     await this.connector.attachLocalBridge(url, token);
     this.stateChanged();
   }
@@ -2389,9 +2507,9 @@ class StartJamTransportAction extends JamAction {
 
   async _executeAction() {
     if (!this.client.userRole) {
-      Tone.Transport.start("+0.5");
+      Tone.Transport.start(this.client.connector.config.client.legacy.localStartOffset);
     } else {
-      this.client.connector.startTransport(this.client.bpm, "+0.5");
+      this.client.connector.startTransport(this.client.bpm);
     }
     this.client._isPlaying = true;
   }
@@ -2428,6 +2546,6 @@ class StopJamTransportAction extends JamAction {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     JamConnector, JamConnectClient, JamLinkClock, JamLinkTimeline, LocalBridgeConnection,
-    DEFAULT_BRIDGE_URL, BRIDGE_PEER_ID
+    BRIDGE_PEER_ID, JAMCONNECT_FALLBACK_CONFIG, jamBridgeUrl, jamMergeConfig
   };
 }

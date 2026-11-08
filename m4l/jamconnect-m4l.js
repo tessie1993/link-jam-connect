@@ -128,11 +128,56 @@ class MiniWebSocket {
   }
 }
 
+// ---------------------------------------------------------------- configuration
+// Values come from jamconnect.config.json ("m4l" + "bridge" sections), looked up in:
+//   --config <file> argument, this script's folder, its parent folder (repo layout).
+// "--url <ws://...>" / "--token <t>" arguments and the "connect" message override it.
+const fs = require('fs');
+const path = require('path');
+
+function argValue(name) {
+  const i = process.argv.indexOf(name);
+  return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : undefined;
+}
+
+function loadConfig() {
+  const candidates = [
+    argValue('--config'),
+    path.join(__dirname, 'jamconnect.config.json'),
+    path.join(__dirname, '..', 'jamconnect.config.json')
+  ].filter(Boolean);
+  for (const file of candidates) {
+    const resolved = path.isAbsolute(file) ? file : path.resolve(__dirname, file);
+    if (fs.existsSync(resolved)) {
+      return { file: resolved, config: JSON.parse(fs.readFileSync(resolved, 'utf8')) };
+    }
+  }
+  return { file: null, config: {} };
+}
+
+const loaded = loadConfig();
+const m4lCfg = loaded.config.m4l || {};
+const bridgeCfg = loaded.config.bridge || {};
+
+function bridgeUrlFromConfig() {
+  if (m4lCfg.bridgeUrl) return m4lCfg.bridgeUrl;
+  if (bridgeCfg.port) {
+    const host = !bridgeCfg.bind || bridgeCfg.bind === '0.0.0.0' || bridgeCfg.bind === '::' ? '127.0.0.1' : bridgeCfg.bind;
+    return `ws://${host}:${bridgeCfg.port}`;
+  }
+  return '';
+}
+
 // ---------------------------------------------------------------- JamConnect client
 const state = {
-  url: 'ws://127.0.0.1:20809',
-  token: '',
-  name: 'Ableton Live (M4L)',
+  url: argValue('--url') || bridgeUrlFromConfig(),
+  token: argValue('--token') !== undefined ? argValue('--token') : (m4lCfg.bridgeToken || bridgeCfg.token || ''),
+  name: m4lCfg.name || 'Ableton Live',
+  reconnectMs: m4lCfg.reconnectMs,
+  padNoteMs: m4lCfg.padNoteMs,
+  padDefaultVelocity: m4lCfg.padDefaultVelocity,
+  maxTracks: m4lCfg.maxTracks,
+  maxScenes: m4lCfg.maxScenes,
   want: true,
   ws: null,
   authed: false,
@@ -148,6 +193,10 @@ function send(obj) {
 
 function connect() {
   clearTimeout(state.retry);
+  if (!state.url) {
+    status('no bridge URL: add jamconnect.config.json or send "connect ws://host:port"');
+    return;
+  }
   if (state.ws) { try { state.ws.close(); } catch (_) {} }
   state.authed = false;
   status(`connecting ${state.url}`);
@@ -172,7 +221,7 @@ function connect() {
     if (ws !== state.ws) return;
     state.authed = false;
     status('disconnected');
-    if (state.want) state.retry = setTimeout(connect, 2000);
+    if (state.want && state.reconnectMs > 0) state.retry = setTimeout(connect, state.reconnectMs);
   };
 }
 
@@ -214,10 +263,12 @@ function handle(msg) {
     case 'PAD_PLAY': {
       // Acid303-style pads: map note names like "C2" to MIDI if possible.
       const n = typeof msg.note === 'number' ? msg.note : noteNameToMidi(msg.note);
-      if (n !== null) {
-        const vel = Math.round((Number(msg.velocity) || 0.8) * 127);
-        maxApi.outlet('note', n, vel, 1);
-        setTimeout(() => maxApi.outlet('note', n, 0, 1), 150);
+      if (n !== null && state.padNoteMs > 0) {
+        const vel = Math.round((Number(msg.velocity) || state.padDefaultVelocity || 0) * 127);
+        if (vel > 0) {
+          maxApi.outlet('note', n, Math.min(127, vel), 1);
+          setTimeout(() => maxApi.outlet('note', n, 0, 1), state.padNoteMs);
+        }
       }
       break;
     }
@@ -226,7 +277,8 @@ function handle(msg) {
       break;
     default:
       if (typeof msg.type === 'string' && msg.type.startsWith('LIVE_') && msg.type !== 'LIVE_SET_INFO' && msg.type !== 'LIVE_ERROR') {
-        maxApi.outlet('live', msg.type, JSON.stringify(msg));
+        const withLimits = { maxTracks: state.maxTracks, maxScenes: state.maxScenes, ...msg };
+        maxApi.outlet('live', msg.type, JSON.stringify(withLimits));
       }
   }
 }
@@ -274,4 +326,5 @@ maxApi.addHandlers({
   liveerror: (...parts) => send({ type: 'LIVE_ERROR', message: parts.join(' ') })
 });
 
+if (loaded.file) maxApi.post(`jamconnect: config ${loaded.file}`);
 connect();

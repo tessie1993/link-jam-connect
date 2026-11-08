@@ -1,7 +1,7 @@
 // linkpeer: headless Ableton Link peer used to test the bridge without Live.
 // Prints tempo/beat/phase/play state as JSON lines so tests can parse it.
 //
-//   linkpeer [--seconds N] [--bpm B] [--tempo-at S:BPM] [--play-at S] [--stop-at S]
+//   linkpeer --bpm B [--seconds N] [--tempo-at S:BPM] [--play-at S] [--stop-at S]
 
 #include <ableton/Link.hpp>
 
@@ -14,7 +14,7 @@
 
 int main(int argc, char** argv)
 {
-  double seconds = 10, bpm = 120, quantum = 4;
+  double seconds = 10, bpm = 0, quantum = 4;
   std::vector<std::pair<double, double>> tempoChanges;
   double playAt = -1, stopAt = -1;
   for (int i = 1; i + 1 < argc; i += 2)
@@ -33,6 +33,12 @@ int main(int argc, char** argv)
       const auto c = v.find(':');
       tempoChanges.emplace_back(std::stod(v.substr(0, c)), std::stod(v.substr(c + 1)));
     }
+  }
+
+  if (!(bpm >= 20 && bpm <= 999))
+  {
+    std::cerr << "linkpeer: --bpm <20..999> is required" << std::endl;
+    return 1;
   }
 
   ableton::Link link(bpm);
