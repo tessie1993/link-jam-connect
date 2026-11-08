@@ -1,0 +1,31 @@
+/* Wavetable synth specifics (shared look: ../common/jcapp.css). */
+.section-grid { display: flex; flex-wrap: wrap; gap: 0.6rem 0.4rem; align-items: flex-start; }
+.knob { display: flex; flex-direction: column; align-items: center; width: 4.1rem; user-select: none; touch-action: none; cursor: ns-resize; outline: none; }
+.knob svg { width: 3.2rem; height: 3.2rem; }
+.knob:focus svg .track { stroke: #10b981; }
+.knob .name { font-size: 9px; color: #94a3b8; text-transform: uppercase; text-align: center; line-height: 1.1; margin-top: 0.1rem; }
+.knob .val { font-size: 10px; color: #fcd34d; white-space: nowrap; }
+.knob.locked { cursor: not-allowed; }
+.knob .track { stroke: #1e293b; }
+.knob .value { stroke: #10b981; }
+.knob .mod { stroke: #f59e0b; }
+.knob .owner { fill: #64748b; }
+.knob.remote .value { stroke: #38bdf8; }
+.sel { display: flex; flex-direction: column; width: 6.2rem; }
+.sel select { font-size: 11px; padding: 0.25rem 0.3rem; }
+.matrix-row { display: grid; grid-template-columns: 1fr 1fr 4.2rem; gap: 0.4rem; align-items: center; }
+.meter { height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; }
+.meter > div { height: 100%; width: 0; background: #10b981; transition: width 60ms linear; }
+.keyboard { position: relative; display: flex; height: 7rem; user-select: none; touch-action: none; }
+.key { flex: 1; min-width: 1.5rem; background: #e2e8f0; color: #475569; border: 1px solid #0f172a; border-radius: 0 0 0.3rem 0.3rem; font-size: 8px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 0.2rem; touch-action: none; }
+.key.black { background: #0f172a; color: #64748b; height: 62%; margin: 0 -0.45rem; z-index: 1; flex: 0 0 0.9rem; min-width: 0.9rem; border-color: #334155; }
+.key.on { background: #10b981; color: #020617; }
+.key.black.on { background: #059669; }
+.key.armed { box-shadow: inset 0 0 0 2px #f59e0b; }
+#fine-toggle.on { background: #78350f; border-color: #f59e0b; color: #fde68a; }
+canvas.box { display: block; }
+@media (max-width: 640px) {
+  .knob { width: 3.6rem; }
+  .knob svg { width: 2.8rem; height: 2.8rem; }
+  .keyboard { height: 6rem; }
+}

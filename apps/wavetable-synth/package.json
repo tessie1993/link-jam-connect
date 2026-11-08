@@ -1,0 +1,6 @@
+{
+  "name": "jamconnect-wavetable-synth",
+  "private": true,
+  "type": "module",
+  "description": "Static web app (no build step). This file only tells Node that the .js files here are ES modules (tests/wavetable-synth.mjs)."
+}
