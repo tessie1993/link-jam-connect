@@ -35,7 +35,17 @@
     "hostStateIntervalMs": 250,
     "followIntervalMs": 50,
     "followMaxDriftMs": 8,
-    "paramChangeBufferMs": 30,
+    "paramChangeBufferMs": 0,
+    "limits": {
+      "maxMessageBytes": 1048576,
+      "maxTypeLength": 64,
+      "maxStringLength": 256,
+      "maxNameLength": 64,
+      "maxBatchSize": 512,
+      "maxDelaySec": 10,
+      "maxDelayMs": 10000,
+      "maxRttMs": 60000
+    },
     "linkClock": {
       "numberDataPoints": 100,
       "numberMeasurements": 5,
