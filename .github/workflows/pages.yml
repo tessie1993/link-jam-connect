@@ -50,8 +50,6 @@ jobs:
           test -f _site/apps/mod-device/engine/mod-core.wasm
           test -f _site/apps/wavetable-synth/engine/synth.wasm
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
