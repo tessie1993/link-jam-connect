@@ -468,15 +468,10 @@ pub fn json_string_array(json: &str, key: &str) -> Vec<String> {
         Some(o) => o,
         None => return Vec::new(),
     };
-    let close = match rest[open..].find(']') {
-        Some(c) => open + c,
-        None => return Vec::new(),
-    };
-    let body = &rest[open + 1..close];
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut inside = false;
-    for ch in body.chars() {
+    for ch in rest[open + 1..].chars() {
         if ch == '"' {
             if inside {
                 out.push(cur.clone());
@@ -485,6 +480,8 @@ pub fn json_string_array(json: &str, key: &str) -> Vec<String> {
             inside = !inside;
         } else if inside {
             cur.push(ch);
+        } else if ch == ']' {
+            break;
         }
     }
     out

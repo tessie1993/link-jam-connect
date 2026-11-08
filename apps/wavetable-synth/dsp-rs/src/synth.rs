@@ -484,12 +484,24 @@ impl Synth {
     }
 
     fn apply(&mut self, e: Event) {
+        // voice allocation reads parameter values (mode, polyphony, glide): make them current
+        self.refresh();
         match e.kind {
             EV_ON => self.note_on_now(e.a as i32, e.b),
             EV_OFF => self.note_off_now(e.a as i32),
             EV_CTL => self.controller_now(e.a as u32, e.b),
             EV_ALL_OFF => self.release_all(),
             _ => {}
+        }
+    }
+
+    /// Recompute changed parameter values; a voice-mode change releases the old mode's voices.
+    fn refresh(&mut self) {
+        self.params.update();
+        let mode = self.params.vi(VOICE_MODE);
+        if mode != self.last_mode {
+            self.last_mode = mode;
+            self.release_all();
         }
     }
 
@@ -842,12 +854,7 @@ impl Synth {
         if n == 0 {
             return;
         }
-        self.params.update();
-        let mode = self.params.vi(VOICE_MODE);
-        if mode != self.last_mode {
-            self.last_mode = mode;
-            self.release_all();
-        }
+        self.refresh();
         let dt = n as f32 / self.sr;
         let c = Ctl {
             sr: self.sr,
