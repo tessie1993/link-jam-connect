@@ -23,6 +23,15 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Build the mod device core (Rust -> WebAssembly)
+        working-directory: apps/mod-device/core-rs
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+          mkdir -p ../engine
+          cp target/wasm32-unknown-unknown/release/mod_core.wasm ../engine/mod-core.wasm
       - name: Assemble site
         run: |
           mkdir -p _site
@@ -30,6 +39,8 @@ jobs:
           cp -r apps _site/apps
           cp JamConnect/jamconnect.js _site/
           cp jamconnect.config.json _site/
+          rm -rf _site/apps/mod-device/core-rs
+          test -f _site/apps/mod-device/engine/mod-core.wasm
       - uses: actions/configure-pages@v5
         with:
           enablement: true

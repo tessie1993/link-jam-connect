@@ -95,6 +95,8 @@ const JAM_LOCAL_MESSAGE_TYPES = new Set([
  */
 function jamRemoteControlPermission(msg) {
   const t = msg && msg.type;
+  // PARAMS-PROTOCOL writes (modulators -> instruments) are parameter changes too.
+  if (/^JAM_PARAM_(SET|CURVE|TOUCH|RELEASE)$/.test(t)) return 'syncDeviceParameterChange';
   if (typeof t !== 'string' || !(t.startsWith('LIVE_') || t.startsWith('M4L_'))) return null;
   if (/^LIVE_(GET_|OBSERVE$|UNOBSERVE$)/.test(t) || /^M4L_(DISCOVER|GET_STATUS|LIST_MAPPINGS)$/.test(t)) return null;
   if (t === 'LIVE_SET_SONG' && msg.prop === 'tempo') return 'syncMasterSettings';

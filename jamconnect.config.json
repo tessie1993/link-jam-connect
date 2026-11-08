@@ -87,6 +87,116 @@
       "midiMonitorMax": 200,
       "ccSendIntervalMs": 30,
       "logMax": 200
+    },
+    "modulator": {
+      "appName": "JamConnect Mod Device",
+      "logMax": 200,
+      "instanceIdPrefix": "mod-",
+      "instanceIdLength": 8,
+      "storageKey": "jcModDevice",
+      "maxSources": 48,
+      "maxRoutes": 32,
+      "maxTargetsPerRoute": 8,
+      "tickIntervalMs": 10,
+      "discoverIntervalMs": 10000,
+      "announceDebounceMs": 250,
+      "paramChangedIntervalMs": 50,
+      "touchOffsetRoutes": false,
+      "offsetBaseDefault": 0.5,
+      "learnTimeoutMs": 15000,
+      "learnMaxObservedDevices": 8,
+      "send": {
+        "jamParamIntervalMs": 40,
+        "liveParamIntervalMs": 60,
+        "m4lMacroIntervalMs": 30,
+        "m4lCcIntervalMs": 20,
+        "abletonMaxPerSecond": 60,
+        "valueEpsilon": 0.001
+      },
+      "curve": {
+        "tolerance": 0.004,
+        "renderStepMs": 10,
+        "lookaheadMs": 100,
+        "leadMarginMs": 5,
+        "maxPointsPerMessage": 48,
+        "expCurve": 4,
+        "bufferPoints": 1024,
+        "outputPoints": 1024
+      },
+      "sensors": {
+        "staleMs": 1000,
+        "oneEuroDCutoff": 1,
+        "shakeThreshold": 14,
+        "shakeRefractoryMs": 350,
+        "shakeGateMs": 120,
+        "gravityLowpassHz": 0.8,
+        "simulateTiltDeg": 60
+      },
+      "gestures": {
+        "maxFingers": 5,
+        "swipeMinVelocity": 1.5,
+        "swipeMinDistance": 0.15,
+        "swipeGateMs": 150,
+        "pinchRange": 4,
+        "rotateRangeDeg": 180,
+        "velocityRange": 4,
+        "radiusRangePx": 60,
+        "forceDefault": 0.5,
+        "throwIdleMs": 60,
+        "velocityFilter": { "minCutoff": 2, "beta": 0.1, "dCutoff": 1 }
+      },
+      "physics": {
+        "stepMs": 2,
+        "maxSubsteps": 200,
+        "restVelocity": 0.02,
+        "restDistance": 0.002
+      },
+      "lfo": {
+        "divisions": ["1/32", "1/16", "1/8", "1/4", "1/2", "1", "2", "4", "8", "16", "32"],
+        "defaultDivision": "1/4"
+      },
+      "seq": {
+        "gateFraction": 0.5,
+        "maxSteps": 32,
+        "defaultValues": [0.1, 0.6, 0.3, 0.9, 0.2, 0.75, 0.45, 1]
+      },
+      "lorenz": {
+        "sigma": 10,
+        "rho": 28,
+        "beta": 2.6666666667,
+        "dt": 0.01,
+        "stepMs": 5,
+        "initial": [0.1, 0, 0],
+        "bounds": { "x": 25, "y": 35, "zMin": 0, "zMax": 55 }
+      },
+      "logistic": { "initial": 0.4, "maxIterationsPerTick": 64 },
+      "ball": { "dropHeight": 1 },
+      "well": { "start": [0.5, 0.85], "startVelocity": [0.6, 0] },
+      "mic": { "fftSize": 1024 },
+      "scopes": { "historyMs": 4000, "fps": 30 },
+      "ui": { "padHeightVh": 42, "ribbonHeightPx": 72, "scopeHeightPx": 44, "trailPoints": 24, "saveDebounceMs": 400, "startScene": "XY morph" },
+      "ranges": {
+        "global": { "depth": [0, 1, 1] },
+        "transform": { "depth": [-1, 1, 1], "offset": [-1, 1, 0], "curveAmount": [0.1, 10, 3], "slewMs": [0, 5000, 0], "steps": [0, 64, 0] },
+        "lfo": { "hz": [0.01, 40, 1], "phase": [0, 1, 0], "pulseWidth": [0.01, 0.99, 0.5], "fadeBeats": [0, 64, 0], "fadeMs": [0, 20000, 0], "amount": [0, 1, 1], "seed": [0, 9999, 1] },
+        "envBeats": { "attack": [0, 32, 0.05], "hold": [0, 32, 0], "decay": [0, 32, 0.5], "sustain": [0, 1, 0.6], "release": [0, 32, 1], "gateLen": [0.01, 32, 0.5] },
+        "envMs": { "attack": [0, 20000, 10], "hold": [0, 20000, 0], "decay": [0, 20000, 300], "sustain": [0, 1, 0.6], "release": [0, 20000, 500], "gateLen": [1, 20000, 250] },
+        "env": { "everyBeats": [0.0625, 64, 4], "threshold": [0, 1, 0.5], "hysteresis": [0, 0.5, 0.05], "amount": [0, 1, 1], "midiNote": [-1, 127, -1], "midiChannel": [0, 16, 0] },
+        "seq": { "steps": [1, 32, 8], "glide": [0, 1, 0] },
+        "euclid": { "steps": [1, 32, 16], "pulses": [0, 32, 5], "rotate": [0, 31, 0], "gate": [0.01, 1, 0.5] },
+        "lorenz": { "speed": [0.05, 10, 1] },
+        "logistic": { "r": [3.4, 4, 3.9], "glide": [0, 1, 0] },
+        "walk": { "rate": [0.5, 200, 20], "sigma": [0.001, 0.5, 0.05], "seed": [0, 9999, 7] },
+        "perlin": { "cyclesPerBeat": [0.01, 16, 0.25], "hz": [0.01, 40, 0.5], "octaves": [1, 6, 2], "seed": [0, 9999, 3] },
+        "sh": { "glideMs": [0, 2000, 0] },
+        "mic": { "gain": [0.1, 50, 4], "attackMs": [0.5, 500, 10], "releaseMs": [5, 5000, 250] },
+        "ball": { "gravity": [0.5, 50, 9], "restitution": [0, 0.98, 0.8], "everyBeats": [0.25, 64, 4] },
+        "well": { "strength": [0.01, 5, 0.6], "damping": [0, 5, 0.2], "softening": [0.01, 0.5, 0.08], "homeX": [0, 1, 0.5], "homeY": [0, 1, 0.5] },
+        "midi": { "cc": [0, 127, 1], "channel": [0, 16, 0] },
+        "macro": { "amount": [-2, 2, 1], "offset": [-1, 1, 0], "steps": [2, 64, 8], "slewMs": [0, 5000, 200], "curveAmount": [0.1, 10, 3] },
+        "pad": { "homeX": [0, 1, 0.5], "homeY": [0, 1, 0.5], "springK": [1, 400, 80], "damping": [0, 60, 10], "friction": [0, 20, 1.5], "restitution": [0, 1, 0.75], "gravity": [0, 40, 6] },
+        "motion": { "tiltRange": [5, 180, 45], "accelRange": [1, 40, 10], "rotRange": [30, 2000, 360], "deadZone": [0, 0.5, 0.03], "minCutoff": [0.01, 10, 1], "filterBeta": [0, 2, 0.05] }
+      }
     }
   },
   "webrtc": {

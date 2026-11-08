@@ -102,6 +102,55 @@ It never talks to Live or Max directly: Link state comes from the bridge's Link 
 Quantized notes are sent at the grid time in the browser's Link-synchronised clock, so they reach Live one
 network hop later (localhost: about a millisecond).
 
+## Mod Device app
+
+`apps/mod-device/` (served at `/apps/mod-device/`, deployed to Pages) turns a phone (or desktop) into a
+**modulation source** for other JamConnect devices (e.g. the wavetable synth) and for Ableton, or both at once.
+
+**Architecture.** All modulation math is **Rust compiled to WebAssembly** (`apps/mod-device/core-rs`, a
+`cdylib` with a plain C ABI, no wasm-bindgen, no crates; fixed buffers allocated at init, no allocation in the
+tick, `panic = "abort"`, seeded RNG). JavaScript is only the shell: UI, touch / DeviceMotion / Web MIDI / mic
+capture, JamConnect messaging (`engine.js`) and the source-type metadata mirrored from the ABI (`schema.js`).
+Every `client.modulator.tickIntervalMs` the shell calls `core_tick(linkBeat, tempo, quantum, now, dt, lead)`
+and reads per-route breakpoint batches (Link beats, decimated) from a shared buffer. The core runs on the
+**main thread**: touch / sensor events and the connection live there, one tick costs microseconds, and a worker
+would only add `postMessage` hops and a second copy of the state.
+
+* **Build.** CI only (job `mod-wasm`: `cargo test`, release build for `wasm32-unknown-unknown`, optional
+  `wasm-opt`, then `tests/mod-device.mjs` against the real `.wasm`; artifact `mod-core-wasm`). Release packages
+  and Pages include `apps/mod-device/engine/mod-core.wasm`; it is never committed (`.gitignore`). Without it the
+  app says "core not built" and where to get it. Locally, `node tests/mod-device.mjs --mock` tests the shell
+  with `tests/mod-core-mock.cjs` (same exports).
+* **Sources.** Multi-touch XY pads and ribbons (position, pressure, touch radius, speed, finger count, pinch,
+  rotate, swipe) with physics (spring back, inertia / throw, bounce, gravity; fixed timestep); device tilt
+  (alpha / beta / gamma), acceleration, rotation rate, shake (calibration, inversion, dead zone, range,
+  one-euro smoothing; iOS permission behind the MOTION button; desktop tilt simulator); LFOs (sine, tri, saw,
+  ramp, square, S&H, smooth random, drawable) synced to the Link grid (1/32..32 bars, dotted / triplet) and
+  phase-locked to the Link timeline, or free in Hz, with phase, fade-in and retrigger on bar / trigger;
+  envelopes (ADSR / AHDSR / drawable multi-stage, times in beats or ms) triggered by touch, shake, MIDI notes
+  (`MIDI_EVENT` or Web MIDI), Link beats or thresholds; step sequencer with glide; Euclidean triggers; Lorenz
+  attractor and logistic map; random walk; Perlin noise; sample & hold of any source; mic envelope follower;
+  bouncing ball; gravity well XY; MIDI CC / notes; macros (add, sub, multiply, min, max, average, crossfade,
+  quantize, slew, curve, invert, scale).
+* **Routes.** Up to `client.modulator.maxRoutes`: source → transform (depth, offset, polarity, response curve,
+  quantize, slew, invert) → targets: a JamConnect instrument parameter (`JAM_PARAM_CURVE`, absolute or offset,
+  also by name pattern), a Live device parameter (`LIVE_SET_PARAM`), an M4L macro (`M4L_SET_MACRO`, optionally
+  `M4L_MAP_MACRO`), MIDI CC into the M4L device (`M4L_CC`), or this device's own parameters. **Learn**: wiggle a
+  parameter in its own UI (`JAM_PARAM_CHANGED`, `LIVE_PARAM_CHANGED`, `M4L_MACRO_CHANGED`).
+* **Sending.** Link-synced sources are rendered ahead (`curve.lookaheadMs`), realtime ones are stamped at
+  now + measured one-way latency (`_sessionOneWayMs()`) + send interval + margin; curves are decimated with an
+  error bound (`curve.tolerance`). Each target type has its own rate (`client.modulator.send.*`), Ableton
+  traffic also shares a budget (`abletonMaxPerSecond`). `JAM_PARAM_TOUCH` on gesture start, `RELEASE` at the end;
+  **HOLD** latches pads, **PANIC / FREEZE** releases everything and stops. WebRTC guests need the host's
+  "Params / macros" (and "MIDI" for CC) permission.
+* **Own manifest.** The device announces itself (`kind: "modulator"`), so LFO rates, depths etc. can be
+  modulated or set remotely, and routes can target the device's own parameters.
+* **Scenes.** Saved in localStorage, JSON import / export, factory examples (tilt filter sweep, shake to drop,
+  Link-synced wobble, XY morph, Euclid pluck, chaos drift).
+
+Sensors and touch need a real phone in a **secure context**: `http://localhost` (the bridge on the same
+machine) counts as secure; LAN phones need https, e.g. the Pages deployment joining over WebRTC.
+
 ## Configuration
 
 Everything that can be tuned lives in **`jamconnect.config.json`**. No component has its own
@@ -110,7 +159,7 @@ port, URL, tempo, timeout or ICE server built in:
 | Section | Used by | Contents |
 |---------|---------|----------|
 | `bridge` | jamlink-bridge | bind, port, token, initial tempo (only used when no Link session exists), quantum, tempo range, start/stop sync, intervals, timeouts, message size limit, static web roots (`"/prefix=dir"` mounts a directory under a URL path, e.g. `/apps=apps`) |
-| `client` | jamconnect.js, web apps | app name, bridge URL/token (empty URL = derived), bridge retry interval, follow-Link, quantum, timeouts, follower tuning, Link clock measurement (`linkClock`), `liveControl` and `m4lController` app settings (send throttles, pads, keyboard, CCs, quantize options, discovery interval) |
+| `client` | jamconnect.js, web apps | app name, bridge URL/token (empty URL = derived), bridge retry interval, follow-Link, quantum, timeouts, follower tuning, Link clock measurement (`linkClock`), `liveControl` and `m4lController` app settings (send throttles, pads, keyboard, CCs, quantize options, discovery interval), `modulator` (mod device: limits, per-target send rates, curve tolerance / lookahead / buffers, sensor, gesture and physics tuning, chaos constants, parameter ranges, UI) |
 | `webrtc` | jamconnect.js, web app | PeerJS id prefixes, session/token lengths and alphabets, **ICE/TURN servers**, **PeerJS signaling server** (`signal`: host, port, path, secure, key) |
 | `m4l` | Max for Live device | bridge URL/token (empty = from `bridge`), device name, reconnect delay, LiveAPI limits (tracks, scenes, returns, sends, devices, params, observers), observer rate limit, status interval and peer timeout, MIDI forwarding, note lengths, macros (count, names, ranges), mapping limit |
 
