@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>JamConnect Mod Device</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/15.1.22/Tone.js"></script>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="../../jamconnect.js"></script>
+  <script src="../common/jcapp.js"></script>
+  <script src="schema.js"></script>
+  <script src="engine.js"></script>
+  <link rel="stylesheet" href="../common/jcapp.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-mono">
+  <header class="border-b border-slate-800 px-3 py-2 flex flex-wrap items-center gap-2 justify-between">
+    <div class="flex items-center gap-2 flex-wrap">
+      <div class="text-base font-bold tracking-widest text-emerald-400">JAMCONNECT<span class="text-slate-500">·</span><span class="text-fuchsia-400">MOD</span></div>
+      <a class="applink" href="../../index.html">LINK APP</a>
+      <a class="applink" href="../live-control/">LIVE CONTROL</a>
+      <a class="applink" href="../m4l-controller/">M4L</a>
+    </div>
+    <div id="jc-status" class="flex flex-wrap items-center gap-2"></div>
+  </header>
+
+  <div id="core-error" class="hidden m-3 text-sm text-rose-200 bg-rose-950/70 border border-rose-700 rounded-lg p-3"></div>
+  <div id="secure-note" class="hidden mx-3 mt-2 text-[11px] text-amber-200 bg-amber-950/60 border border-amber-800 rounded px-2 py-1.5"></div>
+
+  <div id="toolbar" class="toolbar">
+    <button id="panic" class="btn btn-panic">PANIC / FREEZE</button>
+    <button id="hold" class="btn">HOLD</button>
+    <button id="motion-enable" class="btn">MOTION</button>
+    <button id="mic-enable" class="btn">MIC</button>
+    <button id="midi-enable" class="btn">MIDI IN</button>
+    <span id="link-chip" class="chip">LINK -</span>
+    <span id="learn-chip" class="chip hidden">LEARN</span>
+  </div>
+
+  <nav class="tabs-main" role="tablist">
+    <button class="tab active" data-main="play">PLAY</button>
+    <button class="tab" data-main="sources">SOURCES</button>
+    <button class="tab" data-main="routes">ROUTES</button>
+    <button class="tab" data-main="targets">TARGETS</button>
+    <button class="tab" data-main="scenes">SCENES</button>
+    <button class="tab" data-main="connection">CONNECT</button>
+  </nav>
+
+  <main class="p-3 max-w-[1400px] mx-auto">
+    <section data-pane="play" class="main-pane">
+      <div id="surfaces" class="flex flex-col gap-3"></div>
+      <div id="motion-cards" class="flex flex-col gap-3 mt-3"></div>
+      <div class="panel mt-3">
+        <div class="lbl mb-2">Triggers</div>
+        <div id="trigger-buttons" class="flex flex-wrap gap-2"></div>
+      </div>
+      <div class="panel mt-3">
+        <div class="lbl mb-2">Routes</div>
+        <div id="play-routes" class="grid gap-1.5"></div>
+      </div>
+    </section>
+
+    <section data-pane="sources" class="main-pane hidden">
+      <div class="panel mb-3 flex flex-wrap gap-2 items-end">
+        <label class="flex-1 min-w-[12rem]"><span class="lbl">Add source</span><select id="add-source-type" class="inp"></select></label>
+        <button id="add-source" class="btn-primary">ADD</button>
+      </div>
+      <div id="source-list" class="grid gap-3 lg:grid-cols-2"></div>
+    </section>
+
+    <section data-pane="routes" class="main-pane hidden">
+      <div class="panel mb-3 flex flex-wrap gap-2 items-center justify-between">
+        <div class="hint">Source → transform (depth, offset, polarity, curve, quantize, slew) → one or more targets: JamConnect instruments, Ableton (Live parameter, M4L macro, M4L CC) or this device's own parameters.</div>
+        <div class="flex gap-2 items-center"><span id="route-count" class="text-[11px] text-slate-400"></span><button id="add-route" class="btn-primary">ADD ROUTE</button></div>
+      </div>
+      <div id="route-list" class="grid gap-3"></div>
+    </section>
+
+    <section data-pane="targets" class="main-pane hidden">
+      <div class="panel mb-3 flex flex-wrap gap-2 items-end">
+        <label class="flex-1 min-w-[12rem]"><span class="lbl">Add targets to route</span><select id="assign-route" class="inp"></select></label>
+        <button id="learn" class="btn">LEARN (wiggle a parameter)</button>
+      </div>
+      <div class="grid gap-3 lg:grid-cols-2">
+        <div class="panel">
+          <div class="flex justify-between items-center mb-2"><div class="lbl">JamConnect instruments (PARAMS-PROTOCOL)</div><button id="discover" class="btn btn-xs">DISCOVER</button></div>
+          <div class="flex gap-2 mb-2"><input id="match-pattern" class="inp" placeholder="or by name pattern, e.g. cutoff|filter"><button id="add-match" class="btn">ADD</button></div>
+          <div id="instruments" class="grid gap-2 text-xs"></div>
+        </div>
+        <div class="panel">
+          <div class="flex justify-between items-center mb-2"><div class="lbl">Ableton (Max for Live device)</div><button id="m4l-discover" class="btn btn-xs">DISCOVER</button></div>
+          <div id="m4l-devices" class="flex flex-wrap gap-1.5 text-xs mb-2"></div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+            <label><span class="lbl">Track</span><select id="lv-track" class="inp"></select></label>
+            <label><span class="lbl">Device</span><select id="lv-device" class="inp"></select></label>
+            <label><span class="lbl">Parameter</span><select id="lv-param" class="inp"></select></label>
+          </div>
+          <button id="add-live" class="btn mt-2 w-full">ADD LIVE PARAMETER</button>
+          <div class="grid grid-cols-2 gap-2 mt-3 text-xs items-end">
+            <label><span class="lbl">M4L macro</span><select id="macro-index" class="inp"></select></label>
+            <label class="flex items-center gap-1 text-[11px] text-slate-400"><input id="macro-map" type="checkbox" class="accent-emerald-500"> also map it to the Live parameter</label>
+          </div>
+          <button id="add-macro" class="btn mt-2 w-full">ADD MACRO</button>
+          <div class="grid grid-cols-2 gap-2 mt-3 text-xs">
+            <label><span class="lbl">CC</span><input id="cc-number" type="number" min="0" max="127" class="inp"></label>
+            <label><span class="lbl">Channel</span><input id="cc-channel" type="number" min="1" max="16" class="inp"></label>
+          </div>
+          <button id="add-cc" class="btn mt-2 w-full">ADD MIDI CC</button>
+        </div>
+        <div class="panel lg:col-span-2">
+          <div class="lbl mb-2">This device's own parameters (modulate the modulator)</div>
+          <div id="self-params" class="flex flex-wrap gap-1.5 text-xs"></div>
+        </div>
+      </div>
+    </section>
+
+    <section data-pane="scenes" class="main-pane hidden">
+      <div class="grid gap-3 lg:grid-cols-2">
+        <div class="panel">
+          <div class="lbl mb-2">Factory scenes</div>
+          <div id="factory-scenes" class="grid gap-1.5"></div>
+          <div class="lbl mt-4 mb-2">Saved scenes (this browser)</div>
+          <div id="saved-scenes" class="grid gap-1.5"></div>
+          <div class="flex gap-2 mt-3"><input id="scene-name" class="inp" placeholder="scene name"><button id="scene-save" class="btn-primary">SAVE</button></div>
+        </div>
+        <div class="panel">
+          <div class="lbl mb-2">Export / import (JSON)</div>
+          <textarea id="scene-json" rows="12" class="inp text-[10px]"></textarea>
+          <div class="flex flex-wrap gap-2 mt-2">
+            <button id="scene-export" class="btn">EXPORT CURRENT</button>
+            <button id="scene-download" class="btn">DOWNLOAD</button>
+            <button id="scene-import" class="btn">IMPORT TEXT</button>
+            <label class="btn cursor-pointer">FILE…<input id="scene-file" type="file" accept="application/json,.json" class="hidden"></label>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section data-pane="connection" class="main-pane hidden">
+      <div class="grid gap-3 xl:grid-cols-[340px_1fr]">
+        <section id="jc-connection" class="panel self-start"></section>
+        <div id="jc-link" class="panel"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

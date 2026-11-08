@@ -56,7 +56,10 @@ jobs:
 
   bridge:
     name: bridge (${{ matrix.os }})
-    needs: synth-wasm
+    # One wasm-core job per line, each with its own download step below.
+    needs:
+      - synth-wasm
+      - mod-wasm
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -84,6 +87,7 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Syntax check JS / config
+        shell: bash
         run: |
           node --check JamConnect/jamconnect.js
           node --check webapp/app.js
@@ -92,6 +96,10 @@ jobs:
           node --check apps/common/jcapp.js
           node --check apps/live-control/app.js
           node --check apps/m4l-controller/app.js
+          node --check apps/mod-device/app.js
+          node --check apps/mod-device/engine.js
+          node --check apps/mod-device/schema.js
+          node --check tests/mod-core-mock.cjs
           for f in apps/wavetable-synth/*.js apps/wavetable-synth/dsp/*.js apps/wavetable-synth/worklet/*.js; do node --check "$f"; done
           node -e "JSON.parse(require('fs').readFileSync('jamconnect.config.json','utf8'))"
           node -e "JSON.parse(require('fs').readFileSync('apps/wavetable-synth/presets/factory.json','utf8'))"
@@ -111,6 +119,16 @@ jobs:
       - name: Integration test (Link peer <-> bridge <-> JamConnect)
         run: node tests/integration.mjs --bin build --config jamconnect.config.json
         timeout-minutes: 3
+
+      - name: Mod device shell test (mocked core; the real core is tested in job mod-wasm)
+        run: node tests/mod-device.mjs --config jamconnect.config.json --mock
+        timeout-minutes: 3
+
+      - name: Get the mod device core (wasm from job mod-wasm)
+        uses: actions/download-artifact@v4
+        with:
+          name: mod-core-wasm
+          path: apps/mod-device/engine
 
       - name: Wavetable synth engine (built by synth-wasm)
         uses: actions/download-artifact@v4
@@ -171,3 +189,56 @@ jobs:
         with:
           name: jamconnect-link-m4l
           path: dist/m4l
+
+  mod-wasm:
+    name: mod device core (Rust -> WebAssembly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/mod-device/core-rs
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: cargo test (native)
+        working-directory: apps/mod-device/core-rs
+        run: cargo test
+
+      - name: Build wasm (release)
+        working-directory: apps/mod-device/core-rs
+        run: cargo build --release --target wasm32-unknown-unknown
+
+      - name: Copy to apps/mod-device/engine/mod-core.wasm
+        run: |
+          mkdir -p apps/mod-device/engine
+          cp apps/mod-device/core-rs/target/wasm32-unknown-unknown/release/mod_core.wasm apps/mod-device/engine/mod-core.wasm
+          ls -l apps/mod-device/engine
+
+      - name: wasm-opt (optional)
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y binaryen >/dev/null
+          wasm-opt -O3 apps/mod-device/engine/mod-core.wasm -o apps/mod-device/engine/mod-core.opt.wasm
+          mv apps/mod-device/engine/mod-core.opt.wasm apps/mod-device/engine/mod-core.wasm
+          ls -l apps/mod-device/engine
+
+      - name: Mod device test against the real core
+        run: |
+          node --check apps/mod-device/app.js
+          node --check apps/mod-device/engine.js
+          node --check apps/mod-device/schema.js
+          node tests/mod-device.mjs --config jamconnect.config.json --core apps/mod-device/engine/mod-core.wasm
+        timeout-minutes: 3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mod-core-wasm
+          path: apps/mod-device/engine/mod-core.wasm

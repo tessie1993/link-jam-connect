@@ -435,3 +435,7 @@ node_modules/
 tests/.m4l-under-test.cjs
 __pycache__/
 
+
+# Mod device core: built by CI (job mod-wasm), never committed
+apps/mod-device/engine/*.wasm
+apps/mod-device/core-rs/target/

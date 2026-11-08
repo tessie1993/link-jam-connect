@@ -26,6 +26,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      - name: Build the mod device core (Rust -> WebAssembly)
+        working-directory: apps/mod-device/core-rs
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+          mkdir -p ../engine
+          cp target/wasm32-unknown-unknown/release/mod_core.wasm ../engine/mod-core.wasm
       - name: Build the wavetable synth engine (Rust -> wasm)
         working-directory: apps/wavetable-synth/dsp-rs
         run: |
@@ -40,9 +46,10 @@ jobs:
           cp -r apps _site/apps
           cp JamConnect/jamconnect.js _site/
           cp jamconnect.config.json _site/
+          rm -rf _site/apps/mod-device/core-rs
+          test -f _site/apps/mod-device/engine/mod-core.wasm
+          test -f _site/apps/wavetable-synth/engine/synth.wasm
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
