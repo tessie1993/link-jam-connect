@@ -144,7 +144,9 @@ async function main() {
     if (l.startsWith('{')) { try { peer.push(JSON.parse(l)); } catch (_) {} }
   });
   const lastPeer = () => peer[peer.length - 1];
-  ok(await waitFor(() => peer.length >= 2, 5000), 'Link peer running before the bridge');
+  // Link only prefers the older session if it is > SESSION_EPS (500 ms) older
+  // (ableton/link/Sessions.hpp); otherwise the session id decides. Give it ~3 s (12 x 250 ms reports).
+  ok(await waitFor(() => peer.length >= 12, 8000), 'Link peer running before the bridge');
 
   // 2. bridge (config file + CLI overrides)
   const bridgeLog = [];
