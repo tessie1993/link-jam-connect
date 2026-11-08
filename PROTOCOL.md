@@ -57,11 +57,23 @@ client on receipt at local time now:
     if pgt: data += (gt + pgt) / 2 - ht
 ```
 
-The client sends a ping every `client.linkClock.pingSpacingMs` until it has
-`measurePoints` data points. The offset is their **median**. Bursts repeat every
-`remeasureMs`. The first estimate is published after `minPoints` points so the UI
-can lock on quickly (defaults in `jamconnect.config.json`: 25 ms, 100, 5 s, 6). Any
-JamConnect node answers `LINK_PING`, so the same code runs over WebSocket and WebRTC.
+The procedure is Link's, step for step (`client.linkClock` ships Link's constants):
+
+| Step | Link source | Config (value) |
+|------|-------------|----------------|
+| Next ping right after each pong, carrying the received `gt` as `pgt` | `Measurement.hpp:178-181` | none |
+| Finish when there are **more than** N data points; offset = **median** | `Measurement.hpp:45,197`, `MeasurementService.hpp:171` | `numberDataPoints` (100) |
+| No pong within the timeout: new ping with host time only | `Measurement.hpp:113-128` | `pingTimeoutMs` (50) |
+| Fail after that many timeouts (count not reset by pongs) | `Measurement.hpp:46,122-131` | `numberMeasurements` (5) |
+| Measure the session again periodically | `Sessions.hpp:186` | `remeasureMs` (30000) |
+
+Nothing is published until a measurement completes, as in Link. If a measurement
+fails before any estimate exists, a new one starts right away. Otherwise the previous
+estimate is kept until the next scheduled measurement. Link's 50 ms timeout is meant
+for a LAN: over internet WebRTC with round trips above 50 ms, measurements still
+complete (pongs to timed-out pings are used too), but they take longer and fail more
+often. Any JamConnect node answers `LINK_PING`, so the same code runs over WebSocket
+and WebRTC.
 
 Like Link and NTP, the exchange assumes equal delay in both directions. Jitter is
 filtered by the median. A *constant* asymmetry between the up and down paths

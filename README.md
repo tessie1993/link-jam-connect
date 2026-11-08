@@ -121,8 +121,8 @@ port, URL, tempo, timeout or ICE server built in:
 * `jamconnect.js` keeps fallback values identical to the shipped file, so existing JamConnect apps that
   never load a config keep working. Call `JamConnector.loadConfig()` or `JamConnector.configure(obj)` to
   use your own.
-* `client.linkClock.pingSpacingMs: 0` and `bestRttFraction: 1` are exactly Link's measurement. A spacing above
-  0 drops Link's second data point, and a fraction below 1 keeps only the fastest exchanges before the median.
+* `client.linkClock` follows Ableton Link's `Measurement.hpp` / `Sessions.hpp` exactly and ships Link's
+  constants: 100 data points (median), 50 ms ping timeout, 5 timeouts, re-measure every 30 s.
 
 ## Using the library in your own JamConnect app
 
