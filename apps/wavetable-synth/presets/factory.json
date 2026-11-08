@@ -5,9 +5,9 @@
       "name": "Sub Wobble", "category": "bass", "version": 1,
       "params": {
         "osc1.table": "Basic Shapes", "osc1.pos": 0.6667, "sub.level": 0.6, "sub.shape": "Sine",
-        "filter.type": "LP24", "filter.cutoff": 300, "filter.reso": 0.35, "filter.env": 0.2,
+        "filter.type": "LP24", "filter.cutoff": 450, "filter.reso": 0.35, "filter.env": 0.2, "filter.key": 1,
         "lfo1.sync": "On", "lfo1.div": "1/8", "lfo1.shape": "Sine", "lfo1.retrig": "Beat",
-        "mod1.src": "LFO 1", "mod1.dst": "Cutoff", "mod1.amt": 0.45,
+        "mod1.src": "LFO 1", "mod1.dst": "Cutoff", "mod1.amt": 0.25,
         "voice.mode": "Mono", "voice.glideMode": "Legato", "voice.glide": 0.06,
         "env1.a": 0.002, "env1.d": 0.3, "env1.s": 0.9, "env1.r": 0.12, "amp.level": -4
       }

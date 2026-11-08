@@ -26,18 +26,31 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      - name: Build the wavetable synth engine (Rust -> wasm)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Same build as ci.yml synth-wasm: native tests, wasm32 release build, optional wasm-opt, real-wasm test.
+      - name: cargo test (native)
         working-directory: apps/wavetable-synth/dsp-rs
+        run: cargo test
+      - name: cargo build (wasm32-unknown-unknown)
+        working-directory: apps/wavetable-synth/dsp-rs
+        run: cargo build --release --target wasm32-unknown-unknown
+      - name: Copy (and optimise with wasm-opt when available)
         run: |
-          cargo build --release --target wasm32-unknown-unknown
-          mkdir -p ../engine
-          cp target/wasm32-unknown-unknown/release/jc_wavetable_synth.wasm ../engine/synth.wasm
-          rm -rf target
+          src=apps/wavetable-synth/dsp-rs/target/wasm32-unknown-unknown/release/jc_wavetable_synth.wasm
+          dst=apps/wavetable-synth/engine/synth.wasm
+          mkdir -p apps/wavetable-synth/engine
+          if command -v wasm-opt >/dev/null 2>&1 && wasm-opt -O3 "$src" -o "$dst"; then echo "wasm-opt applied"; else cp "$src" "$dst"; fi
+          rm -rf apps/wavetable-synth/dsp-rs/target
+      - name: Synth test against the real wasm
+        run: node tests/wavetable-synth.mjs --config jamconnect.config.json --require-wasm
       - name: Assemble site
         run: |
           mkdir -p _site
           cp webapp/* _site/
           cp -r apps _site/apps
+          rm -rf _site/apps/wavetable-synth/dsp-rs
           cp JamConnect/jamconnect.js _site/
           cp jamconnect.config.json _site/
       - uses: actions/configure-pages@v5

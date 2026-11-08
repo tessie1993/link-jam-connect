@@ -562,6 +562,41 @@ function makeProc() {
   render(1);
   ok(workletPosts.some((m) => m.type === 'tableLoaded' && m.slot === E.FACTORY_TABLES.length), 'worklet: imported wavetable loaded into the engine');
 }
+{
+  // every factory preset stays audible across the keyboard (catches filters closing at high/low notes)
+  const notes = [28, 40, 52, 64, 76, 88];
+  const minRms = 1e-3; // -60 dBFS
+  const sustainSecs = 0.3; // > one 1/8 LFO cycle at the default tempo
+  const silent = [];
+  for (const preset of factory) {
+    const norms = PR.presetToNorms(preset, schema);
+    for (const note of notes) {
+      const { parameters, msg, render } = makeProc();
+      for (const p of schema) {
+        if (p.modulatable) parameters[p.id] = new Float32Array([norms[p.id]]);
+        else msg({ type: 'stepped', id: p.id, norm: norms[p.id] });
+      }
+      render(2);
+      msg({ type: 'note', on: true, note, velocity: 1, time: null });
+      const val = (id) => P.denormalize(byId.get(id), norms[id]);
+      const sustainStart = val('env1.a') + val('env1.d');
+      const { L, R } = render(Math.ceil(((sustainStart + sustainSecs) * sampleRate) / S.engine.renderQuantum));
+      const win = Math.round(0.01 * sampleRate);
+      const windows = [];
+      for (let s = 0; s + win <= L.length; s += win) {
+        let sum = 0;
+        for (let i = s; i < s + win; i++) sum += L[i] * L[i] + R[i] * R[i];
+        windows.push({ t: s / sampleRate, rms: Math.sqrt(sum / (2 * win)) });
+      }
+      const peak = Math.max(...windows.map((w) => w.rms));
+      // sustaining sounds: the quietest window of the sustain phase (covers tempo-synced LFO troughs)
+      const held = val('env1.s') >= 0.5 ? Math.min(...windows.filter((w) => w.t >= sustainStart).map((w) => w.rms)) : peak;
+      if (process.env.JC_SYNTH_RMS) console.log(`  ${preset.name}@${note} peak ${peak.toExponential(2)} held ${held.toExponential(2)}`);
+      if (!(peak > minRms && held > minRms)) silent.push(`${preset.name}@${note}: peak ${peak.toExponential(2)} held ${held.toExponential(2)}`);
+    }
+  }
+  ok(!silent.length, `presets: all ${factory.length} factory presets audible at notes ${notes.join('/')}`, silent.join(' | '));
+}
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

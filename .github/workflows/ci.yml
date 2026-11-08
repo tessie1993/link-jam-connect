@@ -84,6 +84,7 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Syntax check JS / config
+        shell: bash
         run: |
           node --check JamConnect/jamconnect.js
           node --check webapp/app.js
