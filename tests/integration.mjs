@@ -136,24 +136,26 @@ async function main() {
   // Library takes everything from the same config file the bridge uses.
   JamConnector.configure({ ...config, client: { ...config.client, bridgeUrl: URL } });
 
-  // 1. bridge (config file + CLI overrides)
-  const bridgeLog = [];
-  run(exe('jamlink-bridge'), ['--config', configPath, '--port', String(PORT), '--bpm', String(BRIDGE_FALLBACK_TEMPO), '--quiet'],
-    (l) => { bridgeLog.push(l); console.log(`  [bridge] ${l}`); });
-  ok(await waitFor(() => bridgeLog.some((l) => l.includes('listening')), 5000), 'bridge starts from config file');
-
-  // 2. Link peer standing in for Ableton Live
+  // 1. Link peer standing in for Ableton Live, started first like a running Live set:
+  //    Link keeps the established session's timeline when a new peer joins.
   const peer = [];
   run(exe('linkpeer'), ['--seconds', '75', '--bpm', String(PEER_START_TEMPO),
     '--tempo-at', `34:${PEER_SET_TEMPO}`, '--stop-at', '38'], (l) => {
     if (l.startsWith('{')) { try { peer.push(JSON.parse(l)); } catch (_) {} }
   });
   const lastPeer = () => peer[peer.length - 1];
+  ok(await waitFor(() => peer.length >= 2, 5000), 'Link peer running before the bridge');
+
+  // 2. bridge (config file + CLI overrides)
+  const bridgeLog = [];
+  run(exe('jamlink-bridge'), ['--config', configPath, '--port', String(PORT), '--bpm', String(BRIDGE_FALLBACK_TEMPO), '--quiet'],
+    (l) => { bridgeLog.push(l); console.log(`  [bridge] ${l}`); });
+  ok(await waitFor(() => bridgeLog.some((l) => l.includes('listening')), 5000), 'bridge starts from config file');
 
   // 3. static web app + runtime config
-  const index = await fetch(`http://127.0.0.1:${PORT}/`).then((r) => r.status === 200 && r.text()).catch(() => '');
+  const index = await fetch(`http://127.0.0.1:${PORT}/`).then(async (r) => { const t = await r.text(); return r.status === 200 && t; }).catch(() => '');
   ok(index && index.includes('JamConnect Link'), 'bridge serves web app (static roots from config)');
-  const lib = await fetch(`http://127.0.0.1:${PORT}/jamconnect.js`).then((r) => r.status).catch(() => 0);
+  const lib = await fetch(`http://127.0.0.1:${PORT}/jamconnect.js`).then(async (r) => { await r.arrayBuffer(); return r.status; }).catch(() => 0);
   ok(lib === 200, 'bridge serves jamconnect.js');
   const runtimeCfg = await fetch(`http://127.0.0.1:${PORT}/jamconnect.config.json`).then((r) => r.json()).catch(() => null);
   ok(runtimeCfg && runtimeCfg.runtime && runtimeCfg.runtime.servedByBridge && runtimeCfg.bridge.port === PORT,
