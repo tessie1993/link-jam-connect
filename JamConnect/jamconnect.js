@@ -30,7 +30,12 @@ const JAMCONNECT_FALLBACK_CONFIG = {
     hostStateIntervalMs: 250,
     followIntervalMs: 50,
     followMaxDriftMs: 8,
-    paramChangeBufferMs: 30,
+    paramChangeBufferMs: 0,
+    // Incoming message validation (see PROTOCOL.md, "Trust model")
+    limits: {
+      maxMessageBytes: 1048576, maxTypeLength: 64, maxStringLength: 256, maxNameLength: 64,
+      maxBatchSize: 512, maxDelaySec: 10, maxDelayMs: 10000, maxRttMs: 60000
+    },
     // Original JamConnect (Tone.js transport) timing knobs
     legacy: { rejectCloseDelayMs: 150, clockSamples: 8 },
     // Link measurement: data points per burst, median (ableton/link/Measurement.hpp)
@@ -88,6 +93,164 @@ const JAM_LOCAL_MESSAGE_TYPES = new Set([
   'AUTH_HELLO', 'AUTH_OK', 'AUTH_REJECTED', 'PING', 'PONG', 'CLOCK_SYNC',
   'PEER_LIST', 'PERMISSIONS_UPDATE', 'LINK_PING', 'LINK_PONG', 'LINK_STATE'
 ]);
+
+/**
+ * Permission a WebRTC guest needs before the host relays its LIVE_* / M4L_* request
+ * to the bridge (null = read-only request, always allowed). See PROTOCOL.md.
+ */
+function jamRemoteControlPermission(msg) {
+  const t = msg && msg.type;
+  if (typeof t !== 'string' || !(t.startsWith('LIVE_') || t.startsWith('M4L_'))) return null;
+  if (/^LIVE_(GET_|OBSERVE$|UNOBSERVE$)/.test(t) || /^M4L_(DISCOVER|GET_STATUS|LIST_MAPPINGS)$/.test(t)) return null;
+  if (t === 'LIVE_SET_SONG' && msg.prop === 'tempo') return 'syncMasterSettings';
+  if (t === 'LIVE_SET_SONG' && msg.prop === 'is_playing') return 'syncTransport';
+  if (t === 'LIVE_SONG_ACTION' && ['start', 'stop', 'continue'].includes(msg.action)) return 'syncTransport';
+  if (['LIVE_SET_PARAM', 'LIVE_SET_DEVICE_ACTIVE', 'M4L_SET_MACRO', 'M4L_MAP_MACRO', 'M4L_UNMAP_MACRO'].includes(t)) return 'syncDeviceParameterChange';
+  if (['M4L_NOTE', 'M4L_CC', 'M4L_SET_MIDI_FORWARD'].includes(t)) return 'syncMidi';
+  return 'syncLiveControl';
+}
+
+// Peer ids a WebRTC guest may never use: senders are keyed by id ('HOST' upstream, BRIDGE_PEER_ID local).
+function jamIsReservedPeerId(id, rtc = JAMCONNECT_CONFIG.webrtc) {
+  if (typeof id !== 'string' || !id || id === 'HOST' || id === BRIDGE_PEER_ID) return true;
+  return !!(rtc && rtc.peerPrefix) && !id.startsWith(rtc.peerPrefix);
+}
+
+function jamCleanName(name, fallback, limits = JAMCONNECT_CONFIG.client.limits) {
+  const clean = typeof name === 'string' ? name.trim().slice(0, limits.maxNameLength) : '';
+  return clean || fallback;
+}
+
+function jamSanitizePermissions(permissions) {
+  if (!jamIsObject(permissions)) return null;
+  const out = {};
+  for (const [key, value] of Object.entries(permissions)) {
+    if (typeof value === 'boolean' && key !== '__proto__') out[key] = value;
+  }
+  return out;
+}
+
+function jamIsPlainObject(v) {
+  if (!jamIsObject(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+// Core message types validated strictly; every other type (LIVE_*, M4L_*, JAM_PARAM_*, ...) is app traffic.
+const JAM_CORE_MESSAGE_TYPES = new Set([
+  'AUTH_HELLO', 'AUTH_OK', 'AUTH_REJECTED', 'PING', 'PONG', 'CLOCK_SYNC', 'PEER_LIST',
+  'PERMISSIONS_UPDATE', 'FULL_STATE_SYNC', 'TRANSPORT_STATE', 'TRANSPORT_HEARTBEAT',
+  'PATTERN_STEP_UPDATE', 'PATTERN_FULL_UPDATE', 'DEVICE_PARAMETER_CHANGE', 'DEVICE_PARAMETER_CHANGES',
+  'MASTER_SETTING_UPDATE', 'PAD_PLAY', 'MIDI_EVENT', 'LINK_PING', 'LINK_PONG', 'LINK_STATE',
+  'LINK_SET_TEMPO', 'LINK_SET_PLAYING', 'LINK_REQUEST_BEAT', 'LINK_ENABLE', 'LINK_START_STOP_SYNC', 'LINK_GET_STATE'
+]);
+
+/**
+ * Checks an incoming message and clamps its numeric fields in place.
+ * Returns null if acceptable, otherwise the reason it must be dropped.
+ * cfg = connector config (client.limits, client.tempoMin/Max).
+ */
+function validateJamMessage(msg, cfg = JAMCONNECT_CONFIG) {
+  const L = cfg.client.limits;
+  if (!jamIsPlainObject(msg)) return 'not a plain object';
+  if (typeof msg.type !== 'string' || !msg.type || msg.type.length > L.maxTypeLength) return 'invalid type';
+  if (!JAM_CORE_MESSAGE_TYPES.has(msg.type)) return null;
+
+  const ranges = {
+    bpm: [cfg.client.tempoMin, cfg.client.tempoMax],
+    swing: [0, 1], velocity: [0, 1], normalizedValue: [0, 1],
+    seconds: [0, Infinity], ticks: [0, Infinity],
+    delaySec: [0, L.maxDelaySec], delayFromSendMs: [0, L.maxDelayMs], rtt: [0, L.maxRttMs],
+    timeOffset: [-Infinity, Infinity], hostTime: [-Infinity, Infinity], hostAudioTime: [-Infinity, Infinity],
+    hostSendTime: [-Infinity, Infinity], guestReceiveTime: [-Infinity, Infinity],
+    // JamConnect-Link
+    tempo: [-Infinity, Infinity], beat: [-Infinity, Infinity], atUs: [-Infinity, Infinity],
+    phase: [-Infinity, Infinity], quantum: [-Infinity, Infinity], playTimeUs: [-Infinity, Infinity],
+    playBeat: [-Infinity, Infinity], numPeers: [0, Infinity], linkBeat: [-Infinity, Infinity],
+    ht: [-Infinity, Infinity], gt: [-Infinity, Infinity], pgt: [-Infinity, Infinity],
+    stepIndex: [0, Infinity]
+  };
+  for (const [key, [min, max]] of Object.entries(ranges)) {
+    if (msg[key] === undefined || msg[key] === null) continue;
+    if (typeof msg[key] !== 'number' || !Number.isFinite(msg[key])) return `invalid ${key}`;
+    msg[key] = Math.min(max, Math.max(min, msg[key]));
+  }
+  const str = (v) => typeof v === 'string' && v.length <= L.maxStringLength;
+  const optStr = (key) => msg[key] === undefined || msg[key] === null || str(msg[key]);
+  const value = (v) => (typeof v === 'number' ? Number.isFinite(v) : typeof v === 'string' ? v.length <= L.maxStringLength : true);
+  for (const key of ['appName', 'state', 'transportState', 'instrument', 'presetName', 'source', 'hostAppName', 'sessionId']) {
+    if (!optStr(key)) return `invalid ${key}`;
+  }
+  if (msg.name !== undefined) msg.name = jamCleanName(msg.name, '', L);
+
+  switch (msg.type) {
+    case 'AUTH_HELLO':
+      if (!optStr('authToken')) return 'invalid authToken';
+      break;
+    case 'AUTH_OK':
+      if (msg.permissions !== undefined && !(msg.permissions = jamSanitizePermissions(msg.permissions))) return 'invalid permissions';
+      if (msg.link !== undefined && msg.link !== null) {
+        if (!jamIsPlainObject(msg.link)) return 'invalid link';
+        const err = validateJamMessage({ ...msg.link, type: 'LINK_STATE' }, cfg);
+        if (err) return `link: ${err}`;
+      }
+      break;
+    case 'PING':
+      if (typeof msg.hostSendTime !== 'number') return 'missing hostSendTime';
+      break;
+    case 'PONG':
+      if (typeof msg.hostSendTime !== 'number' || typeof msg.guestReceiveTime !== 'number') return 'missing times';
+      break;
+    case 'CLOCK_SYNC':
+      if (typeof msg.rtt !== 'number' || typeof msg.timeOffset !== 'number') return 'missing rtt/timeOffset';
+      break;
+    case 'PEER_LIST':
+      if (!Array.isArray(msg.peers) || msg.peers.length > L.maxBatchSize || !msg.peers.every(jamIsPlainObject)) return 'invalid peers';
+      msg.peers = msg.peers.map((p) => ({
+        id: String(p.id).slice(0, L.maxStringLength),
+        name: jamCleanName(p.name, 'Jammer', L),
+        appName: jamCleanName(p.appName, 'unknown', L),
+        rtt: Math.min(L.maxRttMs, Math.max(0, Number(p.rtt) || 0))
+      }));
+      break;
+    case 'PERMISSIONS_UPDATE':
+      if (!(msg.permissions = jamSanitizePermissions(msg.permissions))) return 'invalid permissions';
+      break;
+    case 'FULL_STATE_SYNC':
+      if (msg.snapshot !== undefined && msg.snapshot !== null && typeof msg.snapshot !== 'object') return 'invalid snapshot';
+      break;
+    case 'TRANSPORT_STATE':
+      if (!str(msg.state)) return 'invalid state';
+      break;
+    case 'DEVICE_PARAMETER_CHANGE':
+      if (!str(msg.param) || !value(msg.value)) return 'invalid parameter change';
+      break;
+    case 'DEVICE_PARAMETER_CHANGES':
+      if (!Array.isArray(msg.changes) || msg.changes.length === 0 || msg.changes.length > L.maxBatchSize) return 'invalid changes';
+      for (const change of msg.changes) {
+        if (!jamIsPlainObject(change) || !str(change.param) || !value(change.value)) return 'invalid change';
+        if (change.normalizedValue !== undefined && change.normalizedValue !== null) {
+          if (typeof change.normalizedValue !== 'number' || !Number.isFinite(change.normalizedValue)) return 'invalid change';
+          change.normalizedValue = Math.min(1, Math.max(0, change.normalizedValue));
+        }
+      }
+      break;
+    case 'MASTER_SETTING_UPDATE':
+      if (!str(msg.setting) || !value(msg.value)) return 'invalid setting';
+      if (msg.setting === 'bpm' && typeof msg.value === 'number') msg.value = Math.min(cfg.client.tempoMax, Math.max(cfg.client.tempoMin, msg.value));
+      break;
+    case 'LINK_PONG':
+      if (typeof msg.gt !== 'number') return 'missing gt';
+      break;
+    case 'LINK_STATE':
+      if (msg.quantum !== undefined && msg.quantum !== null && !(msg.quantum > 0)) return 'invalid quantum';
+      break;
+    case 'LINK_SET_TEMPO':
+      if (typeof msg.bpm !== 'number') return 'missing bpm';
+      break;
+  }
+  return null;
+}
 
 function nowUs() {
   return performance.now() * 1000;
@@ -423,7 +586,8 @@ class JamConnector {
       syncMasterSettings: true,
       syncPattern: false,
       syncDeviceParameterChange: false,
-      syncMidi: true
+      syncMidi: true,
+      syncLiveControl: true   // guest LIVE_* / M4L_* requests (clips, mixer, song, ...)
     };
 
     this._pingInterval = null;
@@ -442,7 +606,7 @@ class JamConnector {
     this.onPatternStepUpdated = null;  
     this.onDeviceParameterChanged = null;   // (paramName, value, rawParams)
     this.onMasterSettingUpdated = null;  // (settingName, value)
-    this.onMidiMessage = null;         // (midiEvent)
+    this.onMidiMessage = null;         // (appName, midiEvent, rawMessage)
     this.onPermissionsUpdated = null;  // (permissions)
     this.getFullStateSnapshot = null;  // () => ({ pattern, params, bpm, swing, delayWet, isPlaying, step })
     this.applyFullStateSnapshot = null; // (snapshot) => void
@@ -1530,7 +1694,7 @@ class JamConnector {
       case 'MIDI_EVENT':
         if (!this.permissions.syncMidi) return;
         if (this.onMidiMessage) {
-          this.onMidiMessage(msg.appName, msg.event);
+          this.onMidiMessage(msg.appName, msg.event, msg);
         }
         if (this.isHost) {
           this.broadcast(msg, senderId);
@@ -1540,6 +1704,17 @@ class JamConnector {
       default:
         // App-specific traffic (e.g. LIVE_* from the Max for Live device): deliver and relay.
         if (JAM_LOCAL_MESSAGE_TYPES.has(msg.type)) return;
+        if (this.isHost && senderId !== BRIDGE_PEER_ID && senderId !== 'HOST') {
+          const needs = jamRemoteControlPermission(msg);
+          if (needs && !this.permissions[needs]) {
+            const kind = msg.type.startsWith('M4L_') ? 'M4L_ERROR' : 'LIVE_ERROR';
+            this._sendTo(this._connForSender(senderId), {
+              type: kind, request: msg.type, message: `${msg.type}: not allowed by host (${needs})`,
+              ...(msg.requestId !== undefined ? { requestId: msg.requestId } : {})
+            });
+            return;
+          }
+        }
         if (this.onRelayMessage) this.onRelayMessage(msg, senderId);
         if (this.isHost) {
           this.broadcast(msg, senderId);
@@ -2579,6 +2754,6 @@ class StopJamTransportAction extends JamAction {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     JamConnector, JamConnectClient, JamLinkClock, JamLinkTimeline, LocalBridgeConnection,
-    BRIDGE_PEER_ID, JAMCONNECT_FALLBACK_CONFIG, jamBridgeUrl, jamMergeConfig
+    BRIDGE_PEER_ID, JAMCONNECT_FALLBACK_CONFIG, jamBridgeUrl, jamMergeConfig, jamRemoteControlPermission
   };
 }
