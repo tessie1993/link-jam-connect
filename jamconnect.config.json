@@ -16,7 +16,8 @@
     "sessionPrefix": "LINK-",
     "static": [
       "webapp",
-      "JamConnect"
+      "JamConnect",
+      "/apps=apps"
     ]
   },
   "client": {
@@ -34,7 +35,17 @@
     "hostStateIntervalMs": 250,
     "followIntervalMs": 50,
     "followMaxDriftMs": 8,
-    "paramChangeBufferMs": 30,
+    "paramChangeBufferMs": 0,
+    "limits": {
+      "maxMessageBytes": 1048576,
+      "maxTypeLength": 64,
+      "maxStringLength": 256,
+      "maxNameLength": 64,
+      "maxBatchSize": 512,
+      "maxDelaySec": 10,
+      "maxDelayMs": 10000,
+      "maxRttMs": 60000
+    },
     "linkClock": {
       "numberDataPoints": 100,
       "numberMeasurements": 5,
@@ -45,6 +56,47 @@
     "legacy": {
       "rejectCloseDelayMs": 150,
       "clockSamples": 8
+    },
+    "bridgeRetryMs": 3000,
+    "liveControl": {
+      "appName": "JamConnect Live Control",
+      "paramSendIntervalMs": 40,
+      "mixerSendIntervalMs": 40,
+      "refreshDebounceMs": 250,
+      "logMax": 200
+    },
+    "m4lController": {
+      "appName": "JamConnect M4L Controller",
+      "discoverIntervalMs": 5000,
+      "macroSendIntervalMs": 30,
+      "quantizeBeats": 1,
+      "quantizeOptions": [
+        0,
+        0.25,
+        0.5,
+        1,
+        2,
+        4
+      ],
+      "noteDurationMs": 250,
+      "noteVelocity": 100,
+      "keyboardBaseNote": 48,
+      "keyboardKeys": 25,
+      "padBaseNote": 36,
+      "padCount": 16,
+      "ccNumbers": [
+        1,
+        2,
+        7,
+        10,
+        11,
+        71,
+        74,
+        91
+      ],
+      "midiMonitorMax": 200,
+      "ccSendIntervalMs": 30,
+      "logMax": 200
     }
   },
   "webrtc": {
@@ -76,6 +128,70 @@
     "maxTracks": 16,
     "maxScenes": 16,
     "padNoteMs": 150,
-    "padDefaultVelocity": 0.8
+    "padDefaultVelocity": 0.8,
+    "maxDevices": 32,
+    "maxParams": 256,
+    "maxSends": 12,
+    "maxReturns": 12,
+    "maxObservers": 512,
+    "observerIntervalMs": 50,
+    "statusIntervalMs": 3000,
+    "peerTimeoutMs": 10000,
+    "forwardTrackMidi": true,
+    "noteDurationMs": 250,
+    "noteMaxDurationMs": 8000,
+    "maxMappings": 64,
+    "macroIntervalMs": 30,
+    "macroCount": 8,
+    "macros": [
+      {
+        "name": "Macro 1",
+        "shortName": "M1",
+        "min": 0,
+        "max": 127
+      },
+      {
+        "name": "Macro 2",
+        "shortName": "M2",
+        "min": 0,
+        "max": 127
+      },
+      {
+        "name": "Macro 3",
+        "shortName": "M3",
+        "min": 0,
+        "max": 127
+      },
+      {
+        "name": "Macro 4",
+        "shortName": "M4",
+        "min": 0,
+        "max": 127
+      },
+      {
+        "name": "Macro 5",
+        "shortName": "M5",
+        "min": 0,
+        "max": 127
+      },
+      {
+        "name": "Macro 6",
+        "shortName": "M6",
+        "min": 0,
+        "max": 127
+      },
+      {
+        "name": "Macro 7",
+        "shortName": "M7",
+        "min": 0,
+        "max": 127
+      },
+      {
+        "name": "Macro 8",
+        "shortName": "M8",
+        "min": 0,
+        "max": 127
+      }
+    ]
   }
 }

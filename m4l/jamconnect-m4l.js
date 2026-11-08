@@ -1,8 +1,11 @@
 // JamConnect Link — Node for Max side of the Max for Live device.
 // Connects to jamlink-bridge (JamConnect protocol over WebSocket) and relays:
 //   Live track MIDI  <->  MIDI_EVENT   (other JamConnect apps play / hear Live)
-//   LIVE_* messages  <->  [js jamconnect-live.js] (LiveAPI: clips, scenes, params)
+//   LIVE_* messages  <->  [js jamconnect-live.js] (LiveAPI: song, tracks, mixer, clips, devices, params, observers)
+//   M4L_* messages   <->  this device: discovery/status, macros + mappings, notes/CC into the track
 //   tempo / play     ->   LINK_SET_TEMPO / LINK_SET_PLAYING (Live follows via Link)
+// Several devices can run at once: each has an instance id, M4L_* requests carry "target",
+// untargeted LIVE_* requests are answered by the device with the lowest instance id.
 // No npm dependencies (includes a minimal RFC 6455 client) so the device can be frozen.
 
 const net = require('net');
@@ -176,19 +179,90 @@ const state = {
   reconnectMs: m4lCfg.reconnectMs,
   padNoteMs: m4lCfg.padNoteMs,
   padDefaultVelocity: m4lCfg.padDefaultVelocity,
-  maxTracks: m4lCfg.maxTracks,
-  maxScenes: m4lCfg.maxScenes,
+  forwardMidi: m4lCfg.forwardTrackMidi !== false,
+  // Identifies this device instance on the bridge (several devices can run on different tracks).
+  instanceId: argValue('--instance') || `m4l-${crypto.randomBytes(4).toString('hex')}`,
+  deviceInfo: { ready: false },
+  peers: new Map(), // other M4L devices: instance -> { lastSeen, connected }
   want: true,
   ws: null,
   authed: false,
   retry: null,
+  statusTimer: null,
   lastLink: ''
 };
+
+// Everything the LiveAPI side needs from the config travels with each request as msg.cfg.
+const LIVE_CFG_KEYS = ['maxTracks', 'maxScenes', 'maxDevices', 'maxParams', 'maxSends', 'maxReturns',
+  'maxObservers', 'observerIntervalMs', 'macroIntervalMs', 'macroCount', 'macros', 'maxMappings'];
+function liveCfg() {
+  const out = {};
+  for (const k of LIVE_CFG_KEYS) if (m4lCfg[k] !== undefined) out[k] = m4lCfg[k];
+  return out;
+}
+
+// Replies and events produced by Max for Live devices: never forwarded into the LiveAPI.
+const LIVE_REPLY_TYPES = new Set(['LIVE_SET_INFO', 'LIVE_ERROR', 'LIVE_SONG_INFO', 'LIVE_TRACKS_INFO',
+  'LIVE_TRACK_INFO', 'LIVE_DEVICES', 'LIVE_DEVICE_INFO', 'LIVE_PARAM_INFO', 'LIVE_OBSERVING',
+  'LIVE_SONG_CHANGED', 'LIVE_TRACK_CHANGED', 'LIVE_DEVICE_CHANGED', 'LIVE_PARAM_CHANGED', 'LIVE_SET_CHANGED']);
+const M4L_TO_LIVEAPI = new Set(['M4L_SET_MACRO', 'M4L_MAP_MACRO', 'M4L_UNMAP_MACRO', 'M4L_LIST_MAPPINGS']);
 
 function status(s) { maxApi.outlet('status', s); }
 
 function send(obj) {
   if (state.ws && state.authed) state.ws.send(JSON.stringify(obj));
+}
+
+function toLive(type, msg) {
+  maxApi.outlet('live', type, JSON.stringify({ ...msg, cfg: liveCfg() }));
+}
+
+function alivePeers() {
+  const now = Date.now();
+  const timeout = Number(m4lCfg.peerTimeoutMs) || 0;
+  for (const [id, p] of state.peers) {
+    if (!p.connected || (timeout > 0 && now - p.lastSeen > timeout)) state.peers.delete(id);
+  }
+  return [...state.peers.keys()];
+}
+
+// Untargeted LIVE_* requests are handled by one device only: the lowest instance id.
+function isPrimary() {
+  return alivePeers().every((id) => state.instanceId < id);
+}
+
+function addressedToMe(msg) {
+  return !msg.target || msg.target === '*' || msg.target === state.instanceId;
+}
+
+function statusMessage(type, extra = {}) {
+  const info = state.deviceInfo || {};
+  return {
+    type,
+    instance: state.instanceId,
+    name: state.name,
+    appName: 'JamConnect M4L',
+    connected: state.authed,
+    primary: isPrimary(),
+    forwardMidi: state.forwardMidi,
+    ready: !!info.ready,
+    deviceName: info.deviceName || null,
+    track: info.track || null,
+    liveVersion: info.liveVersion || null,
+    macros: info.macros || (m4lCfg.macros || []).slice(0, m4lCfg.macroCount || 0).map((m, index) => ({ index, name: m.name, min: m.min, max: m.max, value: null, normalized: null })),
+    mappings: info.mappings || 0,
+    limits: liveCfg(),
+    ...extra
+  };
+}
+
+function sendStatus(type, requestId) {
+  send(statusMessage(type, requestId !== undefined ? { requestId } : {}));
+}
+
+function statusTick() {
+  toLive('M4L_DEVICE_INFO', {});
+  sendStatus('M4L_STATUS');
 }
 
 function connect() {
@@ -200,6 +274,7 @@ function connect() {
   if (state.ws) { try { state.ws.close(); } catch (_) {} }
   state.authed = false;
   status(`connecting ${state.url}`);
+  maxApi.outlet('url', state.url);
   let ws;
   try {
     ws = new MiniWebSocket(state.url);
@@ -220,9 +295,83 @@ function connect() {
   ws.onclose = () => {
     if (ws !== state.ws) return;
     state.authed = false;
+    clearInterval(state.statusTimer);
     status('disconnected');
     if (state.want && state.reconnectMs > 0) state.retry = setTimeout(connect, state.reconnectMs);
   };
+}
+
+function clampInt(v, lo, hi, fallback) {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : fallback;
+}
+
+function playNote(msg) {
+  const note = clampInt(msg.note, 0, 127, null);
+  if (note === null) return sendError(msg, 'missing note');
+  const ch = clampInt(msg.channel, 1, 16, 1);
+  const vel = clampInt(msg.velocity, 0, 127, 0);
+  if (vel === 0 || msg.off) {
+    maxApi.outlet('note', note, 0, ch);
+    return;
+  }
+  maxApi.outlet('note', note, vel, ch);
+  const maxMs = Number(m4lCfg.noteMaxDurationMs) || 0;
+  let dur = msg.durationMs !== undefined ? Number(msg.durationMs) : Number(m4lCfg.noteDurationMs);
+  if (!(dur > 0)) return; // hold until an explicit note off
+  if (maxMs > 0) dur = Math.min(dur, maxMs);
+  setTimeout(() => maxApi.outlet('note', note, 0, ch), dur);
+}
+
+function sendError(msg, message) {
+  send({ type: msg.type.startsWith('M4L_') ? 'M4L_ERROR' : 'LIVE_ERROR', instance: state.instanceId,
+    request: msg.type, message: `${msg.type}: ${message}`, ...(msg.requestId !== undefined ? { requestId: msg.requestId } : {}) });
+}
+
+// Link covers tempo and start/stop: those LIVE_* requests become Link control messages.
+function linkTranslation(msg) {
+  if (msg.type === 'LIVE_SET_SONG' && msg.prop === 'tempo') return { type: 'LINK_SET_TEMPO', bpm: Number(msg.value) };
+  if (msg.type === 'LIVE_SET_SONG' && msg.prop === 'is_playing') return { type: 'LINK_SET_PLAYING', playing: !!Number(msg.value) };
+  if (msg.type === 'LIVE_SONG_ACTION' && (msg.action === 'start' || msg.action === 'stop')) {
+    return { type: 'LINK_SET_PLAYING', playing: msg.action === 'start', ...(msg.quantum ? { quantum: msg.quantum } : {}) };
+  }
+  return null;
+}
+
+function handleM4l(msg) {
+  if (msg.type === 'M4L_HELLO' || msg.type === 'M4L_STATUS') {
+    if (msg.instance && msg.instance !== state.instanceId) state.peers.set(msg.instance, { lastSeen: Date.now(), connected: msg.connected !== false });
+    return;
+  }
+  if (msg.type === 'M4L_BYE') {
+    state.peers.delete(msg.instance);
+    return;
+  }
+  if (!addressedToMe(msg)) return;
+  switch (msg.type) {
+    case 'M4L_DISCOVER':
+      sendStatus('M4L_HELLO', msg.requestId);
+      break;
+    case 'M4L_GET_STATUS':
+      sendStatus('M4L_STATUS', msg.requestId);
+      break;
+    case 'M4L_NOTE':
+      playNote(msg);
+      break;
+    case 'M4L_CC': {
+      const cc = clampInt(msg.cc, 0, 127, null);
+      if (cc === null) return sendError(msg, 'missing cc');
+      maxApi.outlet('cc', cc, clampInt(msg.value, 0, 127, 0), clampInt(msg.channel, 1, 16, 1));
+      break;
+    }
+    case 'M4L_SET_MIDI_FORWARD':
+      state.forwardMidi = !!msg.enabled;
+      sendStatus('M4L_STATUS', msg.requestId);
+      break;
+    default:
+      if (M4L_TO_LIVEAPI.has(msg.type)) toLive(msg.type, msg);
+      else if (!/^M4L_(MACRO_CHANGED|MAPPINGS|ERROR)$/.test(msg.type)) sendError(msg, 'unknown request');
+  }
 }
 
 function handle(msg) {
@@ -230,6 +379,10 @@ function handle(msg) {
     case 'AUTH_OK':
       state.authed = true;
       status(`connected ${msg.sessionId || ''}`);
+      toLive('M4L_DEVICE_INFO', {});
+      sendStatus('M4L_HELLO');
+      clearInterval(state.statusTimer);
+      if (m4lCfg.statusIntervalMs > 0) state.statusTimer = setInterval(statusTick, m4lCfg.statusIntervalMs);
       break;
     case 'AUTH_REJECTED':
       state.want = false;
@@ -276,9 +429,14 @@ function handle(msg) {
       maxApi.outlet('param', String(msg.appName || ''), String(msg.param), Number(msg.value));
       break;
     default:
-      if (typeof msg.type === 'string' && msg.type.startsWith('LIVE_') && msg.type !== 'LIVE_SET_INFO' && msg.type !== 'LIVE_ERROR') {
-        const withLimits = { maxTracks: state.maxTracks, maxScenes: state.maxScenes, ...msg };
-        maxApi.outlet('live', msg.type, JSON.stringify(withLimits));
+      if (typeof msg.type !== 'string') break;
+      if (msg.type.startsWith('M4L_')) {
+        handleM4l(msg);
+      } else if (msg.type.startsWith('LIVE_') && !LIVE_REPLY_TYPES.has(msg.type)) {
+        if (msg.target && msg.target !== '*' ? msg.target !== state.instanceId : !isPrimary()) break;
+        const link = linkTranslation(msg);
+        if (link) send(link);
+        else toLive(msg.type, msg);
       }
   }
 }
@@ -289,6 +447,10 @@ function noteNameToMidi(name) {
   const base = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 }[m[1].toLowerCase()];
   const acc = m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0;
   return (Number(m[3]) + 2) * 12 + base + acc; // Live convention: C3 = 60
+}
+
+function parseJson(json, what) {
+  try { return JSON.parse(String(json)); } catch (e) { maxApi.post(`bad ${what}: ${e.message}`); return null; }
 }
 
 // ---------------------------------------------------------------- Max inlet messages
@@ -302,17 +464,23 @@ maxApi.addHandlers({
   disconnect: () => {
     state.want = false;
     clearTimeout(state.retry);
+    clearInterval(state.statusTimer);
+    send({ type: 'M4L_BYE', instance: state.instanceId });
     if (state.ws) state.ws.close();
+    state.authed = false;
     status('disconnected');
   },
   name: (...parts) => { state.name = parts.join(' '); },
   token: (t) => { state.token = String(t || ''); },
+  // Track MIDI from [midiin] -> MIDI_EVENT (m4l.forwardTrackMidi / M4L_SET_MIDI_FORWARD)
   note: (pitch, vel, ch) => {
+    if (!state.forwardMidi) return;
     const v = Number(vel) | 0;
-    send({ type: 'MIDI_EVENT', appName: 'Ableton Live', event: { kind: v > 0 ? 'noteon' : 'noteoff', note: Number(pitch) | 0, velocity: v, channel: Number(ch) || 1 } });
+    send({ type: 'MIDI_EVENT', appName: 'Ableton Live', instance: state.instanceId, event: { kind: v > 0 ? 'noteon' : 'noteoff', note: Number(pitch) | 0, velocity: v, channel: Number(ch) || 1 } });
   },
   cc: (num, val, ch) => {
-    send({ type: 'MIDI_EVENT', appName: 'Ableton Live', event: { kind: 'cc', cc: Number(num) | 0, value: Number(val) | 0, channel: Number(ch) || 1 } });
+    if (!state.forwardMidi) return;
+    send({ type: 'MIDI_EVENT', appName: 'Ableton Live', instance: state.instanceId, event: { kind: 'cc', cc: Number(num) | 0, value: Number(val) | 0, channel: Number(ch) || 1 } });
   },
   param: (name, value) => {
     send({ type: 'DEVICE_PARAMETER_CHANGE', appName: 'Ableton Live', param: String(name), value: Number(value) });
@@ -321,10 +489,26 @@ maxApi.addHandlers({
   play: (on) => send({ type: 'LINK_SET_PLAYING', playing: Number(on) !== 0 }),
   // Replies from [js jamconnect-live.js]
   liveinfo: (json) => {
-    try { send({ type: 'LIVE_SET_INFO', ...JSON.parse(String(json)) }); } catch (e) { maxApi.post(`bad liveinfo: ${e.message}`); }
+    const info = parseJson(json, 'liveinfo');
+    if (info) send({ type: 'LIVE_SET_INFO', ...info, instance: state.instanceId });
   },
-  liveerror: (...parts) => send({ type: 'LIVE_ERROR', message: parts.join(' ') })
+  livereply: (type, json) => {
+    const body = parseJson(json, 'livereply');
+    if (body) send({ ...body, type: String(type), instance: state.instanceId });
+  },
+  liveevent: (type, json) => {
+    const body = parseJson(json, 'liveevent');
+    if (body) send({ ...body, type: String(type), instance: state.instanceId });
+  },
+  deviceinfo: (json) => {
+    const info = parseJson(json, 'deviceinfo');
+    if (info) state.deviceInfo = info;
+  },
+  liveerror: (...parts) => send({ type: 'LIVE_ERROR', message: parts.join(' '), instance: state.instanceId })
 });
 
 if (loaded.file) maxApi.post(`jamconnect: config ${loaded.file}`);
+maxApi.post(`jamconnect: instance ${state.instanceId}`);
 connect();
+
+module.exports = { state, handle, isPrimary, linkTranslation };

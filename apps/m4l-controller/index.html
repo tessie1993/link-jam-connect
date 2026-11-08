@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JamConnect M4L Controller</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/15.1.22/Tone.js"></script>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="../../jamconnect.js"></script>
+  <script src="../common/jcapp.js"></script>
+  <link rel="stylesheet" href="../common/jcapp.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-mono">
+  <header class="border-b border-slate-800 px-4 py-3 flex flex-wrap items-center gap-3 justify-between">
+    <div class="flex items-center gap-3">
+      <div class="text-lg font-bold tracking-widest text-emerald-400">JAMCONNECT<span class="text-slate-500">·</span><span class="text-amber-400">M4L CONTROLLER</span></div>
+      <a class="applink" href="../../index.html">LINK APP</a>
+      <a class="applink" href="../live-control/">LIVE CONTROL</a>
+    </div>
+    <div id="jc-status" class="flex flex-wrap items-center gap-2"></div>
+  </header>
+
+  <main class="max-w-[1400px] mx-auto p-4 grid gap-4 xl:grid-cols-[340px_1fr]">
+    <section id="jc-connection" class="panel self-start"></section>
+
+    <section class="flex flex-col gap-4 min-w-0">
+      <div id="jc-link" class="panel"></div>
+
+      <div class="panel">
+        <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
+          <div class="lbl">Max for Live devices on the bridge</div>
+          <button id="discover" class="btn">DISCOVER</button>
+        </div>
+        <div id="devices" class="flex flex-wrap gap-2 text-xs text-slate-500">Load the "JamConnect Link" device on one or more tracks in Live.</div>
+        <div id="device-info" class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-xs"></div>
+      </div>
+
+      <div class="panel">
+        <div class="flex justify-between items-center mb-2">
+          <div class="lbl">Macros (Live parameters of the device; automation and mappings follow)</div>
+          <span id="macro-note" class="text-[11px] text-slate-500"></span>
+        </div>
+        <div id="macros" class="flex flex-wrap gap-3"></div>
+      </div>
+
+      <div class="panel">
+        <div class="lbl mb-2">Macro mapping</div>
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-2 text-xs items-end">
+          <label><span class="lbl">Macro</span><select id="map-macro" class="inp"></select></label>
+          <label><span class="lbl">Track</span><select id="map-track" class="inp"></select></label>
+          <label><span class="lbl">Device</span><select id="map-device" class="inp"></select></label>
+          <label><span class="lbl">Parameter</span><select id="map-param" class="inp"></select></label>
+          <label><span class="lbl">Range (% of parameter)</span>
+            <span class="flex gap-1"><input id="map-min" type="number" min="0" max="100" value="0" class="inp"><input id="map-max" type="number" min="0" max="100" value="100" class="inp"></span></label>
+          <button id="map-add" class="btn-primary" data-needs="syncDeviceParameterChange">MAP</button>
+        </div>
+        <div id="mappings" class="mt-3 flex flex-col gap-1 text-xs"></div>
+      </div>
+
+      <div class="panel">
+        <div class="flex flex-wrap justify-between items-end gap-3 mb-3">
+          <div class="lbl">Notes into the device (→ instrument after it on the track)</div>
+          <div class="flex flex-wrap gap-2 items-end text-xs">
+            <label><span class="lbl">Quantize (beats)</span><select id="quantize" class="inp w-28"></select></label>
+            <label><span class="lbl">Velocity <span id="vel-val"></span></span><input id="velocity" type="range" min="1" max="127" class="w-28"></label>
+            <label><span class="lbl">Length ms</span><input id="duration" type="number" min="1" class="inp w-20"></label>
+            <label><span class="lbl">Channel</span><select id="channel" class="inp w-16"></select></label>
+          </div>
+        </div>
+        <div id="pads" class="grid grid-cols-4 sm:grid-cols-8 gap-2"></div>
+        <div id="keyboard" class="keyboard mt-3"></div>
+      </div>
+
+      <div class="panel">
+        <div class="lbl mb-2">CC into the device</div>
+        <div id="ccs" class="flex flex-wrap gap-3"></div>
+      </div>
+
+      <div class="panel">
+        <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
+          <div class="lbl">Incoming MIDI (track MIDI forwarded by devices, other apps)</div>
+          <div class="flex gap-3 items-center text-xs text-slate-400">
+            <label><input id="forward" type="checkbox" class="accent-emerald-500" data-needs="syncMidi"> Device forwards track MIDI</label>
+            <label><input id="mon-selected" type="checkbox" class="accent-emerald-500"> Selected device only</label>
+            <button id="mon-clear" class="btn">CLEAR</button>
+          </div>
+        </div>
+        <div id="monitor" class="h-48 overflow-y-auto text-[11px] text-slate-300 box"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

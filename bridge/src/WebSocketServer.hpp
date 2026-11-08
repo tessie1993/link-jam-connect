@@ -99,10 +99,19 @@ public:
     mAcceptor.listen();
   }
 
-  void addStaticRoot(const std::string& dir) { mStaticRoots.push_back(dir); }
+  struct StaticRoot
+  {
+    std::string prefix; // URL path prefix ("" = served at /)
+    std::string dir;
+  };
+
+  void addStaticRoot(const std::string& dir, const std::string& prefix = std::string())
+  {
+    mStaticRoots.push_back(StaticRoot{prefix, dir});
+  }
   void setMaxMessageBytes(std::size_t n) { mMaxMessageBytes = n; }
   std::size_t maxMessageBytes() const { return mMaxMessageBytes; }
-  const std::vector<std::string>& staticRoots() const { return mStaticRoots; }
+  const std::vector<StaticRoot>& staticRoots() const { return mStaticRoots; }
 
   void start() { accept(); }
 
@@ -126,7 +135,7 @@ private:
   }
 
   asio::ip::tcp::acceptor mAcceptor;
-  std::vector<std::string> mStaticRoots;
+  std::vector<StaticRoot> mStaticRoots;
   std::size_t mMaxMessageBytes = 0; // 0 = unlimited; set from config
   uint64_t mNextId = 0;
 };
@@ -244,12 +253,25 @@ inline std::string contentType(const std::string& path)
 
 inline void WsSession::serveFile(const std::string& target)
 {
-  std::string path = target.substr(0, target.find_first_of("?#"));
+  const auto queryPos = target.find_first_of("?#");
+  std::string path = target.substr(0, queryPos);
   if (path.empty() || path == "/")
     path = "/index.html";
   if (path.find("..") != std::string::npos || path.find('\\') != std::string::npos)
   {
     writeRaw("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n", true);
+    return;
+  }
+  // Directory URLs: "/apps/x/" serves its index.html and "/apps/x" redirects to "/apps/x/"
+  // so relative links in the page resolve. A directory is never opened as a file.
+  if (path.back() == '/')
+    path += "index.html";
+  else if (path.find('.', path.rfind('/')) == std::string::npos)
+  {
+    const std::string query = queryPos == std::string::npos ? std::string() : target.substr(queryPos);
+    writeRaw("HTTP/1.1 301 Moved Permanently\r\nLocation: " + path + "/" + query
+               + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+      true);
     return;
   }
   {
@@ -265,7 +287,15 @@ inline void WsSession::serveFile(const std::string& target)
   }
   for (const auto& root : mServer.staticRoots())
   {
-    std::ifstream f(root + path, std::ios::binary);
+    std::string rel = path;
+    if (!root.prefix.empty())
+    {
+      if (path.size() <= root.prefix.size() || path.compare(0, root.prefix.size(), root.prefix) != 0
+          || path[root.prefix.size()] != '/')
+        continue;
+      rel = path.substr(root.prefix.size());
+    }
+    std::ifstream f(root.dir + rel, std::ios::binary);
     if (!f)
       continue;
     std::ostringstream body;

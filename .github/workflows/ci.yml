@@ -44,10 +44,22 @@ jobs:
           node --check JamConnect/jamconnect.js
           node --check webapp/app.js
           node --check m4l/jamconnect-m4l.js
+          node --check m4l/jamconnect-live.js
+          node --check apps/common/jcapp.js
+          node --check apps/live-control/app.js
+          node --check apps/m4l-controller/app.js
           node -e "JSON.parse(require('fs').readFileSync('jamconnect.config.json','utf8'))"
 
       - name: WebRTC session + Link clock sync test (no binaries)
         run: node tests/webrtc-sync.mjs --config jamconnect.config.json
+        timeout-minutes: 3
+
+      - name: Live API connector test (mocked LiveAPI / Max, no binaries)
+        run: node tests/live-control.mjs --config jamconnect.config.json
+        timeout-minutes: 3
+
+      - name: Max for Live device test (M4L_*, mocked max-api / LiveAPI, no binaries)
+        run: node tests/m4l-controller.mjs --config jamconnect.config.json
         timeout-minutes: 3
 
       - name: Integration test (Link peer <-> bridge <-> JamConnect)
@@ -64,6 +76,7 @@ jobs:
           elif [ -f build/jamlink-bridge.exe ]; then cp build/*.exe "$out/"; \
           else cp build/jamlink-bridge build/linkpeer "$out/"; fi
           cp webapp/* "$out/webapp/"
+          cp -r apps "$out/apps"
           cp JamConnect/jamconnect.js "$out/webapp/"
           python3 m4l/build_device.py "$out/m4l" || python m4l/build_device.py "$out/m4l"
           cp m4l/*.js "$out/m4l/"
@@ -96,6 +109,10 @@ jobs:
           n = struct.unpack('<I', data[28:32])[0]
           patch = json.loads(data[32:32 + n].rstrip(b'\x00\n'))
           assert any('node.script' in b['box'].get('text', '') for b in patch['patcher']['boxes'])
+          cfg = json.load(open('jamconnect.config.json'))
+          dials = [b for b in patch['patcher']['boxes'] if b['box']['maxclass'] == 'live.dial']
+          assert len(dials) == cfg['m4l']['macroCount'], 'macro dial count != m4l.macroCount'
+          assert any(b['box'].get('text', '').startswith('pattr jc_mappings') for b in patch['patcher']['boxes'])
           print('amxd ok,', n, 'bytes of patcher')
           EOF
       - uses: actions/upload-artifact@v4

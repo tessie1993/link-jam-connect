@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JamConnect Live Control</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/15.1.22/Tone.js"></script>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="../../jamconnect.js"></script>
+  <script src="../common/jcapp.js"></script>
+  <link rel="stylesheet" href="../common/jcapp.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-mono">
+  <header class="border-b border-slate-800 px-4 py-3 flex flex-wrap items-center gap-3 justify-between">
+    <div class="flex items-center gap-3">
+      <div class="text-lg font-bold tracking-widest text-emerald-400">JAMCONNECT<span class="text-slate-500">·</span><span class="text-amber-400">LIVE CONTROL</span></div>
+      <a class="applink" href="../../index.html">LINK APP</a>
+      <a class="applink" href="../m4l-controller/">M4L CONTROLLER</a>
+    </div>
+    <div id="jc-status" class="flex flex-wrap items-center gap-2"></div>
+  </header>
+
+  <main class="max-w-[1400px] mx-auto p-4 grid gap-4 xl:grid-cols-[340px_1fr]">
+    <section id="jc-connection" class="panel self-start"></section>
+
+    <section class="flex flex-col gap-4 min-w-0">
+      <div id="jc-link" class="panel"></div>
+
+      <div class="panel">
+        <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
+          <div class="lbl">Song (Live API via the Max for Live device)</div>
+          <div class="flex gap-1 items-center text-[11px] text-slate-400">
+            <span id="observer-info">observers -</span>
+            <button id="refresh" class="btn">REFRESH</button>
+          </div>
+        </div>
+        <div id="song" class="flex flex-wrap gap-1.5 items-end">
+          <button class="btn" data-action="continue" data-needs="syncTransport" title="Continue from the current position (Link has no continue)">CONTINUE</button>
+          <button class="btn" data-song="metronome" data-needs="syncLiveControl">METRO</button>
+          <button class="btn rec" data-song="record_mode" data-needs="syncLiveControl">● ARR REC</button>
+          <button class="btn rec" data-song="session_record" data-needs="syncLiveControl">● SESSION REC</button>
+          <button class="btn" data-song="overdub" data-needs="syncLiveControl">OVERDUB</button>
+          <button class="btn" data-song="session_automation_record" data-needs="syncLiveControl">AUTOMATION</button>
+          <button class="btn" data-song="loop" data-needs="syncLiveControl">LOOP</button>
+          <button class="btn" data-action="undo" data-needs="syncLiveControl">UNDO</button>
+          <button class="btn" data-action="redo" data-needs="syncLiveControl">REDO</button>
+          <button class="btn" data-action="tap_tempo" data-needs="syncLiveControl">TAP</button>
+          <button class="btn" data-action="capture_midi" data-needs="syncLiveControl">CAPTURE</button>
+          <button class="btn" data-action="back_to_arranger" data-needs="syncLiveControl">BACK TO ARR</button>
+          <button class="btn" data-action="stop_all_clips" data-needs="syncLiveControl">STOP CLIPS</button>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mt-3 text-xs">
+          <label class="box"><span class="lbl">Loop start</span><input id="loop_start" type="number" step="1" class="inp" data-needs="syncLiveControl"></label>
+          <label class="box"><span class="lbl">Loop length</span><input id="loop_length" type="number" step="1" min="0" class="inp" data-needs="syncLiveControl"></label>
+          <label class="box"><span class="lbl">Signature</span>
+            <span class="flex gap-1"><input id="signature_numerator" type="number" min="1" class="inp" data-needs="syncLiveControl"><input id="signature_denominator" type="number" min="1" class="inp" data-needs="syncLiveControl"></span></label>
+          <label class="box"><span class="lbl">Groove <span id="groove-val"></span></span><input id="groove_amount" type="range" min="0" max="1" step="0.01" class="w-full" data-needs="syncLiveControl"></label>
+          <label class="box"><span class="lbl">Launch quantize</span>
+            <select id="clip_trigger_quantization" class="inp" data-needs="syncLiveControl">
+              <option value="0">None</option><option value="1">8 Bars</option><option value="2">4 Bars</option><option value="3">2 Bars</option>
+              <option value="4">1 Bar</option><option value="5">1/2</option><option value="6">1/2T</option><option value="7">1/4</option>
+              <option value="8">1/4T</option><option value="9">1/8</option><option value="10">1/8T</option><option value="11">1/16</option>
+              <option value="12">1/16T</option><option value="13">1/32</option>
+            </select></label>
+          <div class="box"><span class="lbl">Song time (beats)</span><div id="song-time" class="text-base">-</div></div>
+          <div class="box"><span class="lbl">Live tempo / playing</span><div id="live-tempo" class="text-base">-</div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="flex justify-between items-center mb-2">
+          <div class="lbl">Session</div>
+          <button id="stop-all" class="btn" data-needs="syncLiveControl">STOP ALL</button>
+        </div>
+        <div id="grid" class="overflow-x-auto text-xs text-slate-500">Load the "JamConnect Link" device on a track in Live. It answers through the bridge.</div>
+      </div>
+
+      <div class="panel">
+        <div class="lbl mb-2">Mixer</div>
+        <div id="mixer" class="flex gap-2 overflow-x-auto pb-2 text-xs text-slate-500">-</div>
+      </div>
+
+      <div class="panel">
+        <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
+          <div class="lbl">Devices &amp; parameters</div>
+          <select id="dev-track" class="inp w-56"></select>
+        </div>
+        <div id="dev-list" class="flex flex-wrap gap-1.5 mb-3"></div>
+        <div id="dev-head" class="text-xs text-slate-400 mb-2"></div>
+        <div id="params" class="grid gap-2 grid-cols-[repeat(auto-fill,minmax(170px,1fr))]"></div>
+      </div>
+
+      <div class="panel">
+        <div class="flex justify-between items-center mb-2">
+          <div class="lbl">MIDI learn: JamConnect MIDI_EVENT CC → Live parameter</div>
+          <button id="learn-cancel" class="btn hidden">CANCEL LEARN</button>
+        </div>
+        <p class="hint">Press LEARN on a parameter, then move a CC on any JamConnect MIDI source (another app, or the track MIDI of a Max for Live device). Saved in this browser.</p>
+        <div id="learn-status" class="text-xs text-amber-300 mt-1"></div>
+        <div id="midimap" class="mt-2 flex flex-col gap-1 text-xs"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

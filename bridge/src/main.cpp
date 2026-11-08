@@ -51,7 +51,7 @@ struct Options
   std::size_t maxMessageBytes{};
   std::string sessionPrefix;
   bool quiet = false;
-  std::vector<std::string> staticRoots;
+  std::vector<std::pair<std::string, std::string>> staticRoots; // (URL prefix, dir)
 };
 
 void printUsage()
@@ -67,6 +67,7 @@ void printUsage()
        "                    an existing session's tempo always wins (bridge.initialTempo)\n"
        "  --quantum <q>     quantum for phase/launch           (bridge.quantum)\n"
        "  --static <dir>    serve files over HTTP, repeatable  (bridge.static)\n"
+       "                    \"/prefix=dir\" serves dir under the URL path /prefix/\n"
        "  --no-start-stop   disable Link start/stop sync       (bridge.startStopSync)\n"
        "  --quiet           no status line\n";
 }
@@ -199,10 +200,21 @@ bool parseArgs(int argc, char** argv, Options& o)
     throw std::runtime_error("config: bridge intervals and maxMessageBytes must be > 0");
 
   // Static roots are resolved relative to the config file.
-  for (const auto& r : requireValue<std::vector<std::string>>(b, "static"))
+  // An entry "/prefix=dir" serves dir under the URL path /prefix/.
+  for (const auto& entry : requireValue<std::vector<std::string>>(b, "static"))
   {
+    std::string prefix;
+    std::string r = entry;
+    const auto eq = entry.find('=');
+    if (!entry.empty() && entry[0] == '/' && eq != std::string::npos)
+    {
+      prefix = entry.substr(0, eq);
+      r = entry.substr(eq + 1);
+      while (prefix.size() > 1 && prefix.back() == '/')
+        prefix.pop_back();
+    }
     const bool absolute = !r.empty() && (r[0] == '/' || r[0] == '\\' || (r.size() > 1 && r[1] == ':'));
-    o.staticRoots.push_back(absolute || staticFromCli ? r : dirOf(o.configPath) + r);
+    o.staticRoots.emplace_back(prefix, absolute || staticFromCli ? r : dirOf(o.configPath) + r);
   }
   return true;
 }
@@ -226,7 +238,7 @@ public:
     , mSessionId(opts.sessionPrefix + std::to_string(opts.port))
   {
     for (const auto& r : opts.staticRoots)
-      mServer.addStaticRoot(r);
+      mServer.addStaticRoot(r.second, r.first);
     mServer.setMaxMessageBytes(opts.maxMessageBytes);
     mServer.onHttp = [this](const std::string& path, std::string& body, std::string& type) {
       return serveRuntimeConfig(path, body, type);
