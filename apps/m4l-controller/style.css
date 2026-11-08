@@ -1,0 +1,16 @@
+/* M4L Controller specifics (shared look: ../common/jcapp.css). */
+.btn-xs { padding: 0.15rem 0.45rem; font-size: 11px; }
+.device-card { text-align: left; background: #020617; border: 1px solid #334155; border-radius: 0.5rem; padding: 0.4rem 0.7rem; }
+.device-card.on { border-color: #10b981; background: #022c22; }
+.knob { width: 3.4rem; height: 3.4rem; border-radius: 9999px; background: radial-gradient(circle at 35% 30%, #334155, #0b1220); border: 2px solid #475569; position: relative; cursor: ns-resize; touch-action: none; outline: none; }
+.knob:focus { border-color: #10b981; }
+.knob-ind { position: absolute; left: calc(50% - 2px); top: 4px; width: 4px; height: 40%; background: #f59e0b; border-radius: 2px; transform-origin: 50% 125%; }
+.knob.locked { cursor: not-allowed; }
+.pad { aspect-ratio: 1; border-radius: 0.5rem; background: #1e293b; border: 1px solid #334155; font-size: 10px; color: #94a3b8; user-select: none; touch-action: none; }
+.pad.armed { border-color: #f59e0b; }
+.pad.hit, .key.hit { background: #10b981; color: #020617; }
+.key.armed { border-color: #f59e0b; }
+.keyboard { display: flex; height: 6rem; user-select: none; }
+.key { flex: 1; min-width: 1.4rem; background: #e2e8f0; color: #475569; border: 1px solid #0f172a; border-radius: 0 0 0.3rem 0.3rem; font-size: 8px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 0.2rem; touch-action: none; }
+.key.black { background: #0f172a; color: #64748b; height: 62%; margin: 0 -0.45rem; z-index: 1; flex: 0 0 0.9rem; min-width: 0.9rem; border-color: #334155; }
+.vslider { writing-mode: vertical-lr; direction: rtl; height: 8rem; width: 1.5rem; }

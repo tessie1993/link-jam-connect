@@ -163,6 +163,20 @@ async function main() {
   ok(runtimeCfg && runtimeCfg.runtime && runtimeCfg.runtime.servedByBridge && runtimeCfg.bridge.port === PORT,
     'bridge serves runtime config with its real port');
   ok(runtimeCfg && !('token' in (runtimeCfg.bridge || {})), 'runtime config does not leak the bridge token');
+  // apps/ is mounted under /apps ("/apps=apps" in bridge.static); directory URLs serve index.html.
+  const getText = (p, opts) => fetch(`http://127.0.0.1:${PORT}${p}`, opts)
+    .then(async (r) => ({ status: r.status, location: r.headers.get('location'), text: await r.text() }))
+    .catch(() => ({ status: 0, location: null, text: '' }));
+  for (const appDir of ['live-control', 'm4l-controller']) {
+    const page = await getText(`/apps/${appDir}/`);
+    ok(page.status === 200 && page.text.includes('../common/jcapp.js'), `bridge serves /apps/${appDir}/`);
+    const js = await getText(`/apps/${appDir}/app.js`);
+    ok(js.status === 200 && js.text.length > 0, `bridge serves /apps/${appDir}/app.js`);
+    const redirect = await getText(`/apps/${appDir}?session=X`, { redirect: 'manual' });
+    ok(redirect.status === 301 && redirect.location === `/apps/${appDir}/?session=X`, `/apps/${appDir} redirects to the directory URL`);
+  }
+  const shared = await getText('/apps/common/jcapp.js');
+  ok(shared.status === 200, 'bridge serves /apps/common/jcapp.js');
 
   // 4. JamConnect client (local mode)
   const a = new JamConnector('ci-a', makeToneStub(), { followLink: false });

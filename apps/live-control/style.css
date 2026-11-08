@@ -1,0 +1,14 @@
+/* Live Control specifics (shared look: ../common/jcapp.css). */
+.btn-xs { padding: 0.15rem 0.45rem; font-size: 11px; }
+.clip { min-width: 5rem; max-width: 9rem; height: 1.8rem; border-radius: 0.25rem; border: 1px solid #334155; background: #0b1220; color: #64748b; font-size: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 0 0.3rem; }
+.clip.has { background: #1e3a8a; color: #dbeafe; }
+.clip.scene { background: #1e293b; color: #e2e8f0; }
+.clip.track-head { border-top: 3px solid #334155; color: #e2e8f0; }
+.clip.playing { outline: 2px solid #10b981; color: #fff; }
+.clip.fired { outline: 2px dashed #f59e0b; }
+.clip:hover { border-color: #10b981; }
+.strip { min-width: 6.5rem; background: #020617; border: 1px solid #1e293b; border-radius: 0.5rem; padding: 0.4rem; display: flex; flex-direction: column; align-items: stretch; }
+.strip-name { font-size: 11px; color: #e2e8f0; border-top: 3px solid #334155; padding-top: 0.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vslider { writing-mode: vertical-lr; direction: rtl; height: 8rem; width: 1.5rem; margin: 0.3rem auto 0; }
+.param .learn { font-size: 9px; color: #94a3b8; border: 1px solid #334155; border-radius: 0.25rem; padding: 0 0.3rem; }
+.param .learn:hover { color: #fbbf24; border-color: #f59e0b; }

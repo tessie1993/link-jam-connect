@@ -90,6 +90,22 @@ const JAM_LOCAL_MESSAGE_TYPES = new Set([
   'PEER_LIST', 'PERMISSIONS_UPDATE', 'LINK_PING', 'LINK_PONG', 'LINK_STATE'
 ]);
 
+/**
+ * Permission a WebRTC guest needs before the host relays its LIVE_* / M4L_* request
+ * to the bridge (null = read-only request, always allowed). See PROTOCOL.md.
+ */
+function jamRemoteControlPermission(msg) {
+  const t = msg && msg.type;
+  if (typeof t !== 'string' || !(t.startsWith('LIVE_') || t.startsWith('M4L_'))) return null;
+  if (/^LIVE_(GET_|OBSERVE$|UNOBSERVE$)/.test(t) || /^M4L_(DISCOVER|GET_STATUS|LIST_MAPPINGS)$/.test(t)) return null;
+  if (t === 'LIVE_SET_SONG' && msg.prop === 'tempo') return 'syncMasterSettings';
+  if (t === 'LIVE_SET_SONG' && msg.prop === 'is_playing') return 'syncTransport';
+  if (t === 'LIVE_SONG_ACTION' && ['start', 'stop', 'continue'].includes(msg.action)) return 'syncTransport';
+  if (['LIVE_SET_PARAM', 'LIVE_SET_DEVICE_ACTIVE', 'M4L_SET_MACRO', 'M4L_MAP_MACRO', 'M4L_UNMAP_MACRO'].includes(t)) return 'syncDeviceParameterChange';
+  if (['M4L_NOTE', 'M4L_CC', 'M4L_SET_MIDI_FORWARD'].includes(t)) return 'syncMidi';
+  return 'syncLiveControl';
+}
+
 function nowUs() {
   return performance.now() * 1000;
 }
@@ -408,7 +424,8 @@ class JamConnector {
       syncMasterSettings: true,
       syncPattern: false,
       syncDeviceParameterChange: false,
-      syncMidi: true
+      syncMidi: true,
+      syncLiveControl: true   // guest LIVE_* / M4L_* requests (clips, mixer, song, ...)
     };
 
     this._pingInterval = null;
@@ -427,7 +444,7 @@ class JamConnector {
     this.onPatternStepUpdated = null;  
     this.onDeviceParameterChanged = null;   // (paramName, value, rawParams)
     this.onMasterSettingUpdated = null;  // (settingName, value)
-    this.onMidiMessage = null;         // (midiEvent)
+    this.onMidiMessage = null;         // (appName, midiEvent, rawMessage)
     this.onPermissionsUpdated = null;  // (permissions)
     this.getFullStateSnapshot = null;  // () => ({ pattern, params, bpm, swing, delayWet, isPlaying, step })
     this.applyFullStateSnapshot = null; // (snapshot) => void
@@ -1510,7 +1527,7 @@ class JamConnector {
       case 'MIDI_EVENT':
         if (!this.permissions.syncMidi) return;
         if (this.onMidiMessage) {
-          this.onMidiMessage(msg.appName, msg.event);
+          this.onMidiMessage(msg.appName, msg.event, msg);
         }
         if (this.isHost) {
           this.broadcast(msg, senderId);
@@ -1520,6 +1537,17 @@ class JamConnector {
       default:
         // App-specific traffic (e.g. LIVE_* from the Max for Live device): deliver and relay.
         if (JAM_LOCAL_MESSAGE_TYPES.has(msg.type)) return;
+        if (this.isHost && senderId !== BRIDGE_PEER_ID && senderId !== 'HOST') {
+          const needs = jamRemoteControlPermission(msg);
+          if (needs && !this.permissions[needs]) {
+            const kind = msg.type.startsWith('M4L_') ? 'M4L_ERROR' : 'LIVE_ERROR';
+            this._sendTo(this._connForSender(senderId), {
+              type: kind, request: msg.type, message: `${msg.type}: not allowed by host (${needs})`,
+              ...(msg.requestId !== undefined ? { requestId: msg.requestId } : {})
+            });
+            return;
+          }
+        }
         if (this.onRelayMessage) this.onRelayMessage(msg, senderId);
         if (this.isHost) {
           this.broadcast(msg, senderId);
@@ -2546,6 +2574,6 @@ class StopJamTransportAction extends JamAction {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     JamConnector, JamConnectClient, JamLinkClock, JamLinkTimeline, LocalBridgeConnection,
-    BRIDGE_PEER_ID, JAMCONNECT_FALLBACK_CONFIG, jamBridgeUrl, jamMergeConfig
+    BRIDGE_PEER_ID, JAMCONNECT_FALLBACK_CONFIG, jamBridgeUrl, jamMergeConfig, jamRemoteControlPermission
   };
 }
