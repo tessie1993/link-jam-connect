@@ -36,11 +36,10 @@
     "followMaxDriftMs": 8,
     "paramChangeBufferMs": 30,
     "linkClock": {
-      "measurePoints": 100,
-      "minPoints": 6,
-      "pingSpacingMs": 0,
-      "remeasureMs": 5000,
-      "bestRttFraction": 1
+      "numberDataPoints": 100,
+      "numberMeasurements": 5,
+      "pingTimeoutMs": 50,
+      "remeasureMs": 30000
     },
     "heartbeatIntervalMs": 10000,
     "legacy": {

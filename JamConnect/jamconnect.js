@@ -34,7 +34,8 @@ const JAMCONNECT_FALLBACK_CONFIG = {
     // Original JamConnect (Tone.js transport) timing knobs
     legacy: { rejectCloseDelayMs: 150, clockSamples: 8 },
     // Link measurement: data points per burst, median (ableton/link/Measurement.hpp)
-    linkClock: { measurePoints: 100, minPoints: 6, pingSpacingMs: 0, remeasureMs: 5000, bestRttFraction: 1 }
+    // ableton/link: Measurement.hpp kNumberDataPoints, kNumberMeasurements, 50 ms ping timer; Sessions.hpp 30 s remeasure
+    linkClock: { numberDataPoints: 100, numberMeasurements: 5, pingTimeoutMs: 50, remeasureMs: 30000 }
   },
   webrtc: {
     peerPrefix: 'jam-',
@@ -99,98 +100,112 @@ function linkMedian(values) {
 }
 
 /**
- * Median of the offsets, optionally restricted to the fastest exchanges.
- * bestRttFraction = 1 is exactly Link's filter; < 1 drops samples inflated by
- * queueing (ordered WebRTC data channels, busy links) before taking the median.
- */
-function linkOffsetEstimate(samples, bestRttFraction) {
-  let use = samples;
-  if (bestRttFraction > 0 && bestRttFraction < 1 && samples.length > 3) {
-    const keep = Math.max(3, Math.ceil(samples.length * bestRttFraction));
-    use = samples.slice().sort((a, b) => a.rtt - b.rtt).slice(0, keep);
-  }
-  return linkMedian(use.map((s) => s.offset));
-}
-
-/**
- * Estimates offset = remoteClock - localClock (µs) towards one upstream node with
- * the Link ping/pong measurement: two data points per exchange, median filter.
- * Like Link, the next ping is only sent once the previous pong arrived.
+ * Estimates offset = remoteClock - localClock (µs) towards one upstream node,
+ * following ableton/link/Measurement.hpp exactly:
+ *  - the next ping goes out as soon as a pong arrives (Measurement.hpp:181);
+ *  - two data points per pong (lines 185-194), the measurement finishes once there are
+ *    more than kNumberDataPoints (line 197), and the result is their median
+ *    (MeasurementService.hpp:171);
+ *  - if no pong arrives within the ping timeout, a fresh ping (host time only) is sent;
+ *    after kNumberMeasurements timeouts the measurement fails (lines 46, 113-135);
+ *  - the session is measured again periodically (Sessions.hpp:186).
+ * Values come from client.linkClock (shipped with Link's constants).
  */
 class JamLinkClock {
   constructor(send, options = JAMCONNECT_CONFIG.client.linkClock) {
     this._send = send;
     this._opts = { ...JAMCONNECT_CONFIG.client.linkClock, ...options };
     this._data = [];
-    this._prevGhost = 0;
+    this._rtts = [];
     this._timer = null;
-    this._burstTimer = null;
-    this._bursting = false;
+    this._pingTimer = null;
+    this._timeouts = 0;
+    this._measuring = false;
     this.offsetUs = 0;
-    this.rttUs = 0; // median round trip of the last estimate (network latency, measured)
+    this.rttUs = 0; // median round trip of the last measurement (used for latency, not for the offset)
     this.ready = false;
     this.measurements = 0;
+    this.failures = 0;
     this.onUpdate = null;
   }
 
   start() {
     this.stop();
-    this._burst();
-    this._timer = setInterval(() => this._burst(), this._opts.remeasureMs);
+    this._measure();
+    this._timer = setInterval(() => this._measure(), this._opts.remeasureMs);
   }
 
   stop() {
     if (this._timer) clearInterval(this._timer);
-    if (this._burstTimer) clearTimeout(this._burstTimer);
+    if (this._pingTimer) clearTimeout(this._pingTimer);
     this._timer = null;
-    this._burstTimer = null;
-    this._bursting = false;
+    this._pingTimer = null;
+    this._measuring = false;
   }
 
-  _burst() {
-    // A new burst also recovers from a lost pong in the previous one.
-    if (this._burstTimer) clearTimeout(this._burstTimer);
-    this._burstTimer = null;
+  _measure() {
+    if (this._pingTimer) clearTimeout(this._pingTimer);
     this._data = [];
-    this._prevGhost = 0;
-    this._bursting = true;
-    this._ping();
+    this._rtts = [];
+    this._timeouts = 0;
+    this._measuring = true;
+    this._send({ type: 'LINK_PING', ht: nowUs(), pgt: 0 });
+    this._resetTimer();
   }
 
-  _ping() {
-    this._send({ type: 'LINK_PING', ht: nowUs(), pgt: this._prevGhost });
+  // Measurement.hpp resetTimer(): on timeout send a new ping (host time only) until
+  // kNumberMeasurements timeouts, then fail. The count is not reset by pongs, as in Link.
+  _resetTimer() {
+    if (this._pingTimer) clearTimeout(this._pingTimer);
+    this._pingTimer = setTimeout(() => {
+      if (!this._measuring) return;
+      if (this._timeouts < this._opts.numberMeasurements) {
+        this._send({ type: 'LINK_PING', ht: nowUs(), pgt: 0 });
+        this._timeouts++;
+        this._resetTimer();
+      } else {
+        this._fail();
+      }
+    }, this._opts.pingTimeoutMs);
+  }
+
+  _fail() {
+    this._measuring = false;
+    this.failures++;
+    // Keep the previous estimate; with none yet, measure again right away
+    // (Link drops a failed session's measurement and starts over).
+    if (!this.ready) this._measure();
   }
 
   handlePong(msg) {
-    const now = nowUs();
+    if (!this._measuring) return;
+    const hostTime = nowUs();
     const gt = Number(msg.gt) || 0;
-    const ht = Number(msg.ht) || 0;
-    const pgt = Number(msg.pgt) || 0;
-    if (!gt || !ht || !this._bursting) return;
-    const rtt = now - ht;
-    this._data.push({ offset: gt - (now + ht) / 2, rtt });
-    if (pgt) this._data.push({ offset: (gt + pgt) / 2 - ht, rtt });
-    this._prevGhost = gt;
-    const complete = this._data.length >= this._opts.measurePoints;
-    // First burst publishes early so clients lock quickly; later bursts only when complete.
-    if (complete || (!this.ready && this._data.length >= this._opts.minPoints)) {
-      this.offsetUs = linkOffsetEstimate(this._data, this._opts.bestRttFraction);
-      this.rttUs = linkMedian(this._data.map((d) => d.rtt));
-      if (complete) this.measurements++;
-      this.ready = true;
-      if (this.onUpdate) this.onUpdate(this.offsetUs);
+    const prevHostTime = Number(msg.ht) || 0;
+    const prevGhostTime = Number(msg.pgt) || 0;
+    // Next ping right away, carrying the ghost time just received (Measurement.hpp:178-181).
+    this._send({ type: 'LINK_PING', ht: hostTime, pgt: gt });
+    if (gt && prevHostTime) {
+      this._data.push(gt - (hostTime + prevHostTime) / 2);
+      this._rtts.push(hostTime - prevHostTime);
+      if (prevGhostTime) this._data.push((gt + prevGhostTime) / 2 - prevHostTime);
     }
-    if (complete) {
-      this._bursting = false;
-    } else if (!(this._opts.pingSpacingMs > 0)) {
-      // Link behaviour: next ping right away. Only then does the second data point,
-      // (gt + pgt)/2 - ht, hold (our send time sits midway between gt_prev and gt).
-      this._ping();
+    if (this._data.length > this._opts.numberDataPoints) {
+      this._finish();
     } else {
-      // Spaced pings: the midpoint assumption breaks, so drop the second data point.
-      this._prevGhost = 0;
-      this._burstTimer = setTimeout(() => this._ping(), this._opts.pingSpacingMs);
+      this._resetTimer();
     }
+  }
+
+  _finish() {
+    this._measuring = false;
+    if (this._pingTimer) clearTimeout(this._pingTimer);
+    this._pingTimer = null;
+    this.offsetUs = linkMedian(this._data);
+    this.rttUs = linkMedian(this._rtts);
+    this.measurements++;
+    this.ready = true;
+    if (this.onUpdate) this.onUpdate(this.offsetUs);
   }
 
   toLocalUs(remoteUs) { return remoteUs - this.offsetUs; }

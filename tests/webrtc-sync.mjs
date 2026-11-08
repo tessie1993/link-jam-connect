@@ -4,8 +4,8 @@
 //
 // A JamConnect host (timeline authority) and a guest talk over an in-memory PeerJS
 // stand-in with heavy symmetric jitter on an ordered channel. Checks session setup,
-// guest control, and that the guest stays phase-locked to the host. Also reports pure
-// Link filtering (bestRttFraction = 1) next to the configured filter.
+// guest control, Link-timed pads, that the guest stays phase-locked to the host, and that
+// JamLinkClock follows ableton/link/Measurement.hpp (data points, ping timeout + retries).
 
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -22,7 +22,7 @@ const runs = Number(argValue('--runs', 5));
 const { FakePeer } = await import('./fake-peerjs.mjs');
 globalThis.Peer = FakePeer;
 globalThis.window = { location: new URL('http://jamconnect.test/') };
-const { JamConnector, jamMergeConfig } = require(path.join(root, 'JamConnect', 'jamconnect.js'));
+const { JamConnector, JamLinkClock } = require(path.join(root, 'JamConnect', 'jamconnect.js'));
 
 let failures = 0;
 const ok = (cond, label, detail = '') => {
@@ -49,8 +49,8 @@ const tempoLo = Math.max(config.client.tempoMin, 60);
 // Allowed phase error: 1/50 beat at the fastest tempo we test.
 const limitMs = (0.02 * 60000) / tempoHi;
 
-async function measure(bestRttFraction) {
-  JamConnector.configure(jamMergeConfig(config, { client: { linkClock: { bestRttFraction } } }));
+async function measure() {
+  JamConnector.configure(config);
   const errors = [];
   for (let i = 0; i < runs; i++) {
     const host = new JamConnector('host', tone(), { followLink: false });
@@ -118,14 +118,45 @@ ok(padWorst < limitMs, 'snapped pads sound at the same Link moment on guest and 
 guest.disconnect();
 host.disconnect();
 
-// ---- clock sync accuracy
-const configured = config.client.linkClock.bestRttFraction;
-const pure = await measure(1);
-const filtered = configured < 1 ? await measure(configured) : pure;
-const fmt = (e) => e.map((x) => x.toFixed(2)).join(', ');
-console.log(`pure Link median (bestRttFraction 1): worst ${Math.max(...pure).toFixed(2)} ms  [${fmt(pure)}]`);
-if (configured < 1) console.log(`configured (bestRttFraction ${configured}): worst ${Math.max(...filtered).toFixed(2)} ms  [${fmt(filtered)}]`);
-ok(Math.max(...filtered) < limitMs, `guest phase-locked within 1/50 beat at ${tempoHi} BPM`, `limit ${limitMs.toFixed(2)} ms`);
+// ---- JamLinkClock = ableton/link/Measurement.hpp
+const lc = config.client.linkClock;
+{
+  // Responder answering like PingResponder, counting pings per measurement.
+  const pings = [];
+  const clock = new JamLinkClock((m) => {
+    pings.push(m);
+    setTimeout(() => clock.handlePong({ gt: performance.now() * 1000 + 12345, ht: m.ht, pgt: m.pgt }), 1);
+  }, lc);
+  clock.start();
+  await waitFor(() => clock.measurements > 0, 5000);
+  clock.stop();
+  const pongs = pings.length - 1; // the ping sent after the final pong is not answered here
+  ok(clock.measurements === 1 && Math.abs(clock.offsetUs - 12345) < 2000, 'clock measures the offset (median)', `${clock.offsetUs.toFixed(0)} us`);
+  // 2 data points per pong except the first: finishes once > numberDataPoints.
+  ok(2 * pongs - 1 > lc.numberDataPoints && 2 * (pongs - 1) - 1 <= lc.numberDataPoints,
+    'measurement finishes after > numberDataPoints data points, like Link', `${pongs} pongs`);
+  ok(pings.slice(1).every((p) => p.pgt > 0), 'each ping after a pong carries the previous ghost time');
+}
+{
+  // Lost pongs: ping again after pingTimeoutMs, fail after numberMeasurements timeouts.
+  const pings = [];
+  const clock = new JamLinkClock((m) => pings.push({ at: performance.now(), m }), lc);
+  clock._measure();
+  await waitFor(() => clock.failures > 0, 2000, 5);
+  clock.stop();
+  const first = pings.slice(0, lc.numberMeasurements + 1);
+  const gaps = first.slice(1).map((p, i) => p.at - first[i].at);
+  ok(clock.failures === 1, 'measurement fails after numberMeasurements ping timeouts');
+  ok(first.length === lc.numberMeasurements + 1 && first.every((p) => p.m.pgt === 0),
+    'timeout pings carry host time only', `${first.length} pings`);
+  ok(gaps.every((g) => g >= lc.pingTimeoutMs - 2), 'retry pings spaced by pingTimeoutMs', gaps.map((g) => g.toFixed(0)).join('/'));
+  ok(pings.length > lc.numberMeasurements + 1, 'without any estimate yet, a failed measurement starts over');
+}
+
+// ---- clock sync accuracy over the jittered WebRTC stand-in
+const errs = await measure();
+console.log(`Link measurement over jittered channel: worst ${Math.max(...errs).toFixed(2)} ms  [${errs.map((x) => x.toFixed(2)).join(', ')}]`);
+ok(Math.max(...errs) < limitMs, `guest phase-locked within 1/50 beat at ${tempoHi} BPM`, `limit ${limitMs.toFixed(2)} ms`);
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
