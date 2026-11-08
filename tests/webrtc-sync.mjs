@@ -123,9 +123,14 @@ const lc = config.client.linkClock;
 {
   // Responder answering like PingResponder, counting pings per measurement.
   const pings = [];
+  // Symmetric, timer-free transport (OS timer granularity would make it one-sided):
+  // the responder stamps gt one microtask after the ping, the pong arrives one microtask later.
   const clock = new JamLinkClock((m) => {
     pings.push(m);
-    setTimeout(() => clock.handlePong({ gt: performance.now() * 1000 + 12345, ht: m.ht, pgt: m.pgt }), 1);
+    queueMicrotask(() => {
+      const pong = { gt: performance.now() * 1000 + 12345, ht: m.ht, pgt: m.pgt };
+      queueMicrotask(() => clock.handlePong(pong));
+    });
   }, lc);
   clock.start();
   await waitFor(() => clock.measurements > 0, 5000);
