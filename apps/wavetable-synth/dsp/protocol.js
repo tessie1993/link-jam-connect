@@ -14,7 +14,7 @@
  *
  * Stepped (non-modulatable) params have no AudioParam: they go through setStepped(id, norm, time).
  */
-import { quantizeNorm, clamp01 } from './params.js';
+import { quantizeNorm, clamp01, normalize } from './params.js';
 
 export const SHAPES = ['step', 'linear', 'exp', 's'];
 
@@ -70,7 +70,7 @@ export class InstrumentParams {
     this.byId = new Map(schema.map((p) => [p.id, p]));
   }
 
-  defaultNorm(p) { return p.max > p.min ? quantizeNorm(p, (p.default - p.min) / (p.max - p.min)) : 0; }
+  defaultNorm(p) { return normalize(p, p.default); }
   get(id) { return this.values.get(id); }
 
   // ------------------------------------------------------------------ outgoing
@@ -231,7 +231,7 @@ export class InstrumentParams {
     if (!p || (msg.target && !this.addressed(msg))) return false;
     if (this.blocked(p.id, this.sourceOf(msg))) return true;
     const norm = typeof msg.normalizedValue === 'number' ? msg.normalizedValue
-      : typeof msg.value === 'number' && p.max > p.min ? (msg.value - p.min) / (p.max - p.min) : null;
+      : typeof msg.value === 'number' ? normalize(p, msg.value) : null;
     if (norm === null) return true;
     this.curves.delete(p.id);
     this.applyNow(p, quantizeNorm(p, clamp01(norm)));

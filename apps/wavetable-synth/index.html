@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JamConnect Wavetable Synth</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="../../jamconnect.js"></script>
+  <script src="../common/jcapp.js"></script>
+  <link rel="stylesheet" href="../common/jcapp.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-mono">
+  <header class="border-b border-slate-800 px-4 py-3 flex flex-wrap items-center gap-3 justify-between">
+    <div class="flex flex-wrap items-center gap-3">
+      <div class="text-lg font-bold tracking-widest text-emerald-400">JAMCONNECT<span class="text-slate-500">·</span><span class="text-amber-400">WAVETABLE SYNTH</span></div>
+      <a class="applink" href="../../index.html">LINK APP</a>
+      <a class="applink" href="../live-control/">LIVE CONTROL</a>
+      <a class="applink" href="../m4l-controller/">M4L CONTROLLER</a>
+    </div>
+    <div id="jc-status" class="flex flex-wrap items-center gap-2"></div>
+  </header>
+
+  <main class="max-w-[1500px] mx-auto p-3 sm:p-4 grid gap-4 xl:grid-cols-[320px_1fr]">
+    <section id="jc-connection" class="panel self-start"></section>
+
+    <section class="flex flex-col gap-4 min-w-0">
+      <div id="jc-link" class="panel"></div>
+
+      <div id="engine-banner" class="hidden panel border-rose-700 text-rose-200 text-sm"></div>
+
+      <div class="panel">
+        <div class="flex flex-wrap items-end gap-2">
+          <button id="audio-start" class="btn-play">START AUDIO</button>
+          <div class="flex flex-col">
+            <span class="lbl">Engine</span>
+            <span id="engine-status" class="text-xs text-slate-400">not started</span>
+          </div>
+          <div class="flex flex-col">
+            <span class="lbl">Voices</span>
+            <span id="voice-count" class="text-xs text-amber-300">-</span>
+          </div>
+          <div class="flex flex-col min-w-[6rem]">
+            <span class="lbl">Output</span>
+            <div class="meter"><div id="meter-l"></div></div>
+            <div class="meter mt-0.5"><div id="meter-r"></div></div>
+          </div>
+          <button id="panic" class="btn">PANIC</button>
+          <div class="flex flex-col">
+            <span class="lbl">Instance</span>
+            <span id="instance-id" class="text-xs text-emerald-300 select-all">-</span>
+          </div>
+          <label class="flex flex-col"><span class="lbl">Name</span><input id="instance-name" class="inp w-36"></label>
+          <button id="fine-toggle" class="btn" title="Fine knob dragging (also: hold Shift)">FINE</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="flex flex-wrap items-end gap-2">
+          <label class="flex flex-col"><span class="lbl">Category</span><select id="preset-cat" class="inp w-28"></select></label>
+          <label class="flex flex-col grow min-w-[10rem]"><span class="lbl">Preset</span><select id="preset-sel" class="inp"></select></label>
+          <button id="preset-prev" class="btn">◀</button>
+          <button id="preset-next" class="btn">▶</button>
+          <button id="preset-save" class="btn">SAVE</button>
+          <button id="preset-delete" class="btn">DELETE</button>
+          <button id="preset-init" class="btn">INIT</button>
+          <button id="preset-export" class="btn">EXPORT</button>
+          <label class="btn cursor-pointer">IMPORT<input id="preset-import" type="file" accept=".json,application/json" class="hidden"></label>
+          <span class="w-px self-stretch bg-slate-700 mx-1"></span>
+          <button id="ab-a" class="btn on">A</button>
+          <button id="ab-b" class="btn">B</button>
+          <button id="ab-copy" class="btn" title="Copy the active slot to the other one">A→B</button>
+        </div>
+        <div class="flex flex-wrap items-end gap-2 mt-3">
+          <label class="flex flex-col grow min-w-[12rem]"><span class="lbl">Other synths in the session</span><select id="share-target" class="inp"></select></label>
+          <button id="share-send" class="btn" data-needs="syncDeviceParameterChange">SEND PRESET</button>
+          <button id="share-get" class="btn">GET THEIR PRESET</button>
+          <span id="preset-note" class="text-[11px] text-slate-500"></span>
+        </div>
+      </div>
+
+      <div class="grid gap-4 lg:grid-cols-2">
+        <div class="panel">
+          <div class="lbl mb-1">Oscilloscope / spectrum</div>
+          <canvas id="scope" class="w-full h-40 box p-0"></canvas>
+        </div>
+        <div class="panel">
+          <div class="flex justify-between items-end gap-2">
+            <div class="lbl">Wavetables (morph position incl. modulation)</div>
+            <div class="flex gap-2 items-end">
+              <label class="flex flex-col"><span class="lbl">Frame size</span><select id="wt-frame-size" class="inp w-24"></select></label>
+              <label class="btn cursor-pointer">IMPORT WAV<input id="wt-import" type="file" accept=".wav,audio/wav,audio/x-wav" class="hidden"></label>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 mt-1">
+            <canvas id="wt-view-1" class="w-full h-36 box p-0"></canvas>
+            <canvas id="wt-view-2" class="w-full h-36 box p-0"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div id="sections" class="grid gap-4 md:grid-cols-2 2xl:grid-cols-3"></div>
+
+      <div class="panel">
+        <div class="lbl mb-2">Modulation matrix</div>
+        <div id="matrix" class="grid gap-2 sm:grid-cols-2"></div>
+      </div>
+
+      <div class="panel">
+        <div class="flex flex-wrap justify-between items-end gap-3 mb-3">
+          <div class="lbl">Play (on-screen / computer keys / Web MIDI / JamConnect MIDI and pads)</div>
+          <div class="flex flex-wrap gap-2 items-end text-xs">
+            <button id="oct-down" class="btn">OCT -</button>
+            <span id="oct-val" class="text-amber-300 w-6 text-center">0</span>
+            <button id="oct-up" class="btn">OCT +</button>
+            <label class="flex flex-col"><span class="lbl">Velocity <span id="vel-val"></span></span><input id="velocity" type="range" min="1" max="127" class="w-24"></label>
+            <label class="flex flex-col"><span class="lbl">Quantize (Link beats)</span><select id="quantize" class="inp w-28"></select></label>
+            <label class="flex flex-col"><span class="lbl">JamConnect MIDI in</span><select id="midi-source" class="inp w-32">
+              <option value="all">all</option><option value="ableton">Ableton (M4L) only</option><option value="off">off</option></select></label>
+            <label class="flex flex-col"><span class="lbl">Channel</span><select id="midi-channel" class="inp w-16"></select></label>
+            <label class="flex flex-col"><span class="lbl">Web MIDI input</span><select id="webmidi" class="inp w-40"><option value="">(enable)</option></select></label>
+            <label class="flex items-center gap-1"><input id="send-midi" type="checkbox" class="accent-emerald-500" data-needs="syncMidi"> send what I play (MIDI_EVENT + linkBeat)</label>
+            <label class="flex items-center gap-1"><input id="play-pads" type="checkbox" class="accent-emerald-500"> play pads</label>
+          </div>
+        </div>
+        <div id="keyboard" class="keyboard"></div>
+        <p class="hint mt-2">Computer keys: <span id="keymap-hint"></span> (Z / X: octave). Sending to Ableton while its device forwards the same track MIDI back would double notes: set the input to "off" or disable forwarding there.</p>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

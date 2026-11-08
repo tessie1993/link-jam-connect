@@ -137,6 +137,14 @@ play an instrument inside Ableton through the Max for Live device.
 
 `MIDI_EVENT.event` = `{ kind: "noteon"|"noteoff"|"cc", note|cc, velocity|value, channel }`.
 
+Optional `MIDI_EVENT` fields (additive, ignored by older receivers):
+
+* `linkBeat`: the Link beat the event belongs to. Receivers that schedule audio (e.g. the wavetable synth)
+  play it at that beat on their own timeline, like `PAD_PLAY.linkBeat`; past beats and events without
+  `linkBeat` play on arrival.
+* `from`: sender instance id (a receiver ignores its own events); `target`: only that instance plays it.
+* `event.kind` may also be `"pitchbend"` (`value` -1..1, or 0..16383 MIDI 14-bit) and `"aftertouch"` (`value` 0..127).
+
 ## Timing rules (Link owns musical timing)
 
 The library adds no musical delays of its own. Every timing comes from Link or

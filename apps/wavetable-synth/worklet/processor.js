@@ -20,8 +20,9 @@
 import { modulatableIds } from '../dsp/params.js';
 import { WasmSynth, CONTROLLERS, SHAPE_CODES } from '../dsp/engine-wasm.js';
 
-const query = new URL(import.meta.url).searchParams;
-const MOD_SLOTS = Number(query.get('modSlots'));
+// (AudioWorkletGlobalScope has no URL class)
+const slotsMatch = /[?&]modSlots=(\d+)/.exec(import.meta.url);
+const MOD_SLOTS = slotsMatch ? Number(slotsMatch[1]) : NaN;
 if (!(MOD_SLOTS >= 0)) throw new Error('processor.js needs ?modSlots=<client.synth.modSlots> in its URL');
 const MOD_IDS = modulatableIds({ modSlots: MOD_SLOTS });
 
@@ -86,7 +87,9 @@ class JCWavetableSynthProcessor extends AudioWorkletProcessor {
   }
 
   enqueue(m) {
-    const frame = typeof m.time === 'number' && Number.isFinite(m.time) ? Math.round(m.time * sampleRate) : -Infinity;
+    // no time = now: queued at the current frame, so it keeps its order relative to timed events
+    // that are already due (e.g. a note-off sent just before a re-pressed key's note-on)
+    const frame = typeof m.time === 'number' && Number.isFinite(m.time) ? Math.round(m.time * sampleRate) : currentFrame;
     const q = this.queue;
     let i = q.length;
     while (i > 0 && q[i - 1].frame > frame) i--;

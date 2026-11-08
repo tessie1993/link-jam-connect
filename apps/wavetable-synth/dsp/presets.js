@@ -4,13 +4,13 @@
  * value-list params by label ("LP24", "PWM", "1/8D"). Missing params take the init patch value, so
  * presets stay valid when parameters are added. Unknown params / out-of-range values are errors.
  */
-import { normalize, denormalize, quantizeNorm } from './params.js';
+import { normalize, denormalize } from './params.js';
 
 export const PRESET_VERSION = 1;
 
 export function initNorms(schema) {
   const out = {};
-  for (const p of schema) out[p.id] = p.max > p.min ? quantizeNorm(p, (p.default - p.min) / (p.max - p.min)) : 0;
+  for (const p of schema) out[p.id] = normalize(p, p.default);
   return out;
 }
 
