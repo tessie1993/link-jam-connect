@@ -66,6 +66,8 @@ Additive clarifications, as implemented by `apps/mod-device`:
 * **Guest permissions.** A WebRTC host relays a guest's `JAM_PARAM_SET` / `CURVE` / `TOUCH` / `RELEASE` only
   with `syncDeviceParameterChange` ("Params / macros"); otherwise the guest gets `LIVE_ERROR` naming the
   permission (`jamRemoteControlPermission()` in `jamconnect.js`). Discovery and `JAM_PARAM_CHANGED` need none.
+  Only guest-originated writes are gated: messages from the host itself or from the local bridge
+  (`BRIDGE_PEER_ID`) are never blocked, and a guest never re-checks what the host relays to it.
 
 ## Compatibility
 

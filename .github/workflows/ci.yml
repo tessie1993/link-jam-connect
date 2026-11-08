@@ -13,7 +13,9 @@ permissions:
 jobs:
   bridge:
     name: bridge (${{ matrix.os }})
-    needs: [mod-wasm]
+    # One wasm-core job per line (e.g. synth-wasm from feature/wavetable-synth), each with its own download step below.
+    needs:
+      - mod-wasm
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

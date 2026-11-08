@@ -80,6 +80,13 @@ ok(!JSON.stringify(cfg).match(/"(default)?[Tt]empo"/), 'no default tempo in clie
   const missing = used.filter((n) => typeof core[n] !== 'function');
   ok(missing.length === 0, 'every core function the shell calls is exported', missing.join(', ') || `${used.length} functions`);
   if (REAL) ok(core.memory instanceof WebAssembly.Memory && core.core_version() >= 1, 'real WebAssembly core loaded (exports memory, C ABI)');
+  if (REAL) {
+    const names = (c) => Object.keys(c).filter((k) => k.startsWith('core_') && typeof c[k] === 'function').sort();
+    const real = names(core), mock = names(createMockCore());
+    const diff = [...real.filter((n) => !mock.includes(n)).map((n) => `mock lacks ${n}`), ...mock.filter((n) => !real.includes(n)).map((n) => `wasm lacks ${n}`)];
+    ok(diff.length === 0, 'tests/mod-core-mock.cjs exports exactly the real core_* functions', diff.join(', ') || `${real.length} functions`);
+    ok(createMockCore().core_version() === core.core_version(), 'mock and real core report the same core_version');
+  }
 }
 
 // ---------------------------------------------------------------- 2. core math through the ABI
@@ -466,6 +473,24 @@ const runDevice = (dev) => { const t = setInterval(() => dev.tick(performance.no
 {
   ok(M.permissionFor({ type: 'JAM_PARAM_CURVE' }, jamRemoteControlPermission) === 'syncDeviceParameterChange' && M.permissionFor({ type: 'JAM_PARAMS_ANNOUNCE' }, jamRemoteControlPermission) === null && M.permissionFor({ type: 'M4L_CC' }, jamRemoteControlPermission) === 'syncMidi', 'permission map: JAM_PARAM_* writes and Ableton writes');
   ok(jamRemoteControlPermission({ type: 'JAM_PARAM_SET' }) === 'syncDeviceParameterChange' && jamRemoteControlPermission({ type: 'JAM_PARAM_CHANGED' }) === null, 'jamconnect.js: hosts gate guest JAM_PARAM_* writes');
+  {
+    const { BRIDGE_PEER_ID } = require(path.join(root, 'JamConnect', 'jamconnect.js'));
+    const h = new JamConnector('gate', tone(), { followLink: false, adoptTransportTempo: false });
+    h.isHost = true;
+    h.permissions = { ...h.permissions, syncDeviceParameterChange: false };
+    const relayed = [], errors = [];
+    h.onRelayMessage = (m, from) => relayed.push(from);
+    h.broadcast = () => {};
+    h._connForSender = (id) => id;
+    h._sendTo = (_c, m) => errors.push(m);
+    const set = { type: 'JAM_PARAM_SET', instrument: 'x', param: 'p', value: 0.5 };
+    h._routeMessage({ ...set }, 'guest-1');
+    h._routeMessage({ ...set }, BRIDGE_PEER_ID);
+    h._routeMessage({ ...set }, 'HOST');
+    h._routeMessage({ type: 'JAM_PARAM_CHANGED', instrument: 'x', param: 'p', value: 0.5 }, 'guest-1');
+    ok(errors.length === 1 && errors[0].type === 'LIVE_ERROR' && /syncDeviceParameterChange/.test(errors[0].message), 'host refuses a guest JAM_PARAM_SET without syncDeviceParameterChange');
+    ok(relayed.join() === [BRIDGE_PEER_ID, 'HOST', 'guest-1'].join(), 'bridge- and host-originated JAM_PARAM_SET pass the gate; JAM_PARAM_CHANGED is ungated');
+  }
   const host = new JamConnector('host', tone(), { followLink: false, adoptTransportTempo: false });
   const info = await host.createHostSession();
   const guest = new JamConnector('guest', tone(), { followLink: false, adoptTransportTempo: false });
