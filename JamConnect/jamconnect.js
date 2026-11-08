@@ -18,7 +18,7 @@ const JAMCONNECT_FALLBACK_CONFIG = {
     appName: 'JamConnect',
     bridgeUrl: '',
     bridgeToken: '',
-    followLink: false,
+    followLink: true,
     quantum: 4,
     tempoMin: 20,
     tempoMax: 999,
@@ -30,11 +30,9 @@ const JAMCONNECT_FALLBACK_CONFIG = {
     hostStateIntervalMs: 250,
     followIntervalMs: 50,
     followMaxDriftMs: 8,
-    followStartLeadMs: 30,
     paramChangeBufferMs: 30,
-    startDelaySec: 0.015,
     // Original JamConnect (Tone.js transport) timing knobs
-    legacy: { fallbackRttMs: 20, padDelayMs: 20, startOffsetSec: 0.02, heartbeatMaxDriftSec: 0.025, rejectCloseDelayMs: 150, clockSamples: 8, localStartOffset: '+0.5' },
+    legacy: { rejectCloseDelayMs: 150, clockSamples: 8 },
     // Link measurement: data points per burst, median (ableton/link/Measurement.hpp)
     linkClock: { measurePoints: 100, minPoints: 6, pingSpacingMs: 0, remeasureMs: 5000, bestRttFraction: 1 }
   },
@@ -129,6 +127,7 @@ class JamLinkClock {
     this._burstTimer = null;
     this._bursting = false;
     this.offsetUs = 0;
+    this.rttUs = 0; // median round trip of the last estimate (network latency, measured)
     this.ready = false;
     this.measurements = 0;
     this.onUpdate = null;
@@ -176,6 +175,7 @@ class JamLinkClock {
     // First burst publishes early so clients lock quickly; later bursts only when complete.
     if (complete || (!this.ready && this._data.length >= this._opts.minPoints)) {
       this.offsetUs = linkOffsetEstimate(this._data, this._opts.bestRttFraction);
+      this.rttUs = linkMedian(this._data.map((d) => d.rtt));
       if (complete) this.measurements++;
       this.ready = true;
       if (this.onUpdate) this.onUpdate(this.offsetUs);
@@ -1201,7 +1201,8 @@ class JamConnector {
           transport.ticks = 0;
           transport.start(this._audioTimeForPerfMs(playMs), 0);
         } else {
-          const startMs = nowMs + this.config.client.followStartLeadMs;
+          // Join phase-aligned at the audio engine's own scheduling horizon.
+          const startMs = nowMs + lookAheadMs;
           const startTicks = Math.max(0, tl.songBeatAtTime(startMs * 1000) * ppq);
           transport.start(this._audioTimeForPerfMs(startMs), `${Math.round(startTicks)}i`);
         }
@@ -1498,8 +1499,12 @@ class JamConnector {
       case 'PAD_PLAY':
         if (!this.permissions.syncMidi) return;
         if (this.onPadTriggered) {
-          const delaySec = Math.max(0, (msg.delayFromSendMs || this.config.client.legacy.padDelayMs) - (this.rtt / 2)) / 1000;
-          const playTime = this.Tone.now() + delaySec;
+          // Link timing: play at the sender's Link beat (same moment on every peer).
+          // Without a Link beat (older senders) play on arrival.
+          let playTime = this.Tone.now();
+          if (typeof msg.linkBeat === 'number' && this.linkTimeline.source && this.linkTimeline.hasTempo) {
+            playTime = Math.max(playTime, this._audioTimeForPerfMs(this.linkTimeAtBeat(msg.linkBeat)));
+          }
           this.onPadTriggered(msg.appName, msg.instrument, msg.note, msg.velocity, playTime, msg.extra);
         }
         if (this.isHost) {
@@ -1529,8 +1534,8 @@ class JamConnector {
   }
 
   _applyTransportSync(msg) {
-    // When following Link, Tone.Transport is driven by the timeline instead.
-    if (this.followLink && this.linkTimeline.source) return;
+    // A Link timeline owns the timing; legacy transport messages are informational then.
+    if (this.linkTimeline.source) return;
     if (typeof msg.bpm === 'number') {
       this.Tone.Transport.bpm.value = msg.bpm;
     }
@@ -1538,15 +1543,13 @@ class JamConnector {
       this.Tone.Transport.swing = msg.swing;
     }
 
-    const transitSec = Math.max(0, (this.rtt || this.config.client.legacy.fallbackRttMs) / 2) / 1000;
-    
+    const transitSec = Math.max(0, (this.rtt || 0) / 2) / 1000;
+
     if (msg.state === 'started' || msg.transportState === 'started') {
       const targetSeconds = (typeof msg.seconds === 'number' ? msg.seconds : 0) + transitSec;
       if (this.Tone.Transport.state !== 'started') {
         this.Tone.Transport.seconds = targetSeconds;
-        const startOffset = typeof msg.delaySec === 'number'
-          ? Math.max(0, msg.delaySec - transitSec)
-          : this.config.client.legacy.startOffsetSec;
+        const startOffset = typeof msg.delaySec === 'number' ? Math.max(0, msg.delaySec - transitSec) : 0;
         this.Tone.Transport.start(`+${startOffset}`);
       } else if (typeof msg.ticks === 'number') {
         this.Tone.Transport.ticks = msg.ticks;
@@ -1559,6 +1562,7 @@ class JamConnector {
   }
 
   _applyTransportHeartbeat(msg) {
+    if (this.linkTimeline.source) return;
     if (typeof msg.bpm === 'number' && Math.abs(this.Tone.Transport.bpm.value - msg.bpm) > 0.5) {
       this.Tone.Transport.bpm.value = msg.bpm;
     }
@@ -1567,11 +1571,10 @@ class JamConnector {
       this.Tone.Transport.start();
       return;
     }
-    const transitSec = Math.max(0, (this.rtt || this.config.client.legacy.fallbackRttMs) / 2) / 1000;
+    const transitSec = Math.max(0, (this.rtt || 0) / 2) / 1000;
     const expectedSeconds = (msg.seconds || 0) + transitSec;
     const drift = Math.abs(this.Tone.Transport.seconds - expectedSeconds);
-    // Re-align if phase drift exceeds 25ms
-    if (drift > this.config.client.legacy.heartbeatMaxDriftSec) {
+    if (drift > this.config.client.followMaxDriftMs / 1000) {
       this.Tone.Transport.seconds = expectedSeconds;
     }
   }
@@ -1624,60 +1627,55 @@ class JamConnector {
   // PLAYBACK, PATTERN, SYNTH & MIDI SYNC API
   // ==========================================
 
+  /** In a session, Link owns timing: the start lands on the Link timeline (quantized when peers exist). */
   startTransport(bpm = this.Tone.Transport.bpm.value) {
     if (!this.isHost && this.isConnectedToHost && !this.permissions.syncTransport) return;
-    if (this.followLink && this.linkTimeline.source) {
+    if (this.isHost || this.linkTimeline.source) {
+      if (!this.linkTimeline.hasTempo && this.linkTimeline.validTempo(bpm)) this.setLinkTempo(bpm);
       this.setLinkPlaying(true);
+      this._broadcastLegacyTransport('started');
       return;
     }
-    if (this.isHost && !this.linkUpstreamId) {
-      this._applyLinkControlLocally({ type: 'LINK_SET_TEMPO', bpm });
-      this._applyLinkControlLocally({ type: 'LINK_SET_PLAYING', playing: true });
-    }
-
-    this.Tone.Transport.bpm.value = bpm;
-    const delaySec = this.config.client.startDelaySec; // lookahead for tight simultaneous start
-    const futureStartTime = this.Tone.now() + delaySec;
-    this.Tone.Transport.seconds = 0;
-    this.Tone.Transport.ticks = 0;
-    this.Tone.Transport.start(futureStartTime);
-
-    this.broadcast({
-      type: 'TRANSPORT_STATE',
-      state: 'started',
-      bpm,
-      swing: this.Tone.Transport.swing,
-      seconds: 0,
-      ticks: 0,
-      delaySec,
-      hostAudioTime: futureStartTime
-    });
-    
-    this.resync();
+    // Not in a session: plain local transport.
+    if (this.linkTimeline.validTempo(bpm)) this.Tone.Transport.bpm.value = bpm;
+    this.Tone.Transport.start();
   }
 
   stopTransport() {
     if (!this.isHost && this.isConnectedToHost && !this.permissions.syncTransport) return;
-    if (this.followLink && this.linkTimeline.source) {
+    if (this.isHost || this.linkTimeline.source) {
       this.setLinkPlaying(false);
+      this._broadcastLegacyTransport('stopped');
       return;
     }
-    if (this.isHost && !this.linkUpstreamId) {
-      this._applyLinkControlLocally({ type: 'LINK_SET_PLAYING', playing: false });
-    }
-
     this.Tone.Transport.stop();
     this.Tone.Transport.seconds = 0;
     this.Tone.Transport.ticks = 0;
+  }
 
+  /**
+   * Host without a bridge: also tell guests running older JamConnect builds (no Link
+   * support) via TRANSPORT_STATE. Times are taken from the Link timeline, not constants.
+   * With a bridge, the bridge emits TRANSPORT_STATE itself.
+   */
+  /** Measured one-way latency to the rest of the session (Link clock RTT / legacy ping RTT), ms. */
+  _sessionOneWayMs() {
+    let rttMs = 0;
+    for (const c of this.linkClocks.values()) rttMs = Math.max(rttMs, (c.rttUs || 0) / 1000);
+    for (const p of this.peers.values()) rttMs = Math.max(rttMs, p.rtt || 0);
+    if (!this.isHost) rttMs = Math.max(rttMs, this.rtt || 0);
+    return rttMs / 2;
+  }
+
+  _broadcastLegacyTransport(state) {
+    if (!this.isHost || this.linkUpstreamId) return;
+    const tl = this.linkTimeline;
+    if (!tl.hasTempo) return;
+    const delaySec = state === 'started' ? Math.max(0, (tl.playTimeUs - nowUs()) / 1e6) : 0;
     this.broadcast({
-      type: 'TRANSPORT_STATE',
-      state: 'stopped',
-      bpm: this.Tone.Transport.bpm.value,
-      seconds: 0,
-      ticks: 0,
-      hostAudioTime: this.Tone.now()
-    });
+      type: 'TRANSPORT_STATE', state, bpm: tl.tempo, swing: this.Tone.Transport.swing,
+      seconds: 0, ticks: 0, delaySec, hostAudioTime: this.Tone.now() + delaySec
+    }, null, false);
   }
 
   resync() {
@@ -1694,12 +1692,10 @@ class JamConnector {
 
   updateBpm(bpm) {
     if (!this.isHost && this.isConnectedToHost && !this.permissions.syncMasterSettings) return;
-    if (this.followLink && this.linkTimeline.source) {
+    if (this.isHost || this.linkTimeline.source) {
       this.setLinkTempo(bpm);
+      this._broadcastLegacyTransport('bpmchanged');
       return;
-    }
-    if (this.isHost && !this.linkUpstreamId) {
-      this._applyLinkControlLocally({ type: 'LINK_SET_TEMPO', bpm });
     }
 
     this.Tone.Transport.bpm.value = bpm;
@@ -1801,6 +1797,28 @@ class JamConnector {
    * Triggers a 303 note or drum pad with optional 16th-note quantization.
    */
   triggerPad(appName, instrument, note = 'C2', velocity = 0.85, snapStrength = 0, extra = {}) {
+    const tl = this.linkTimeline;
+    if (tl.source && tl.hasTempo) {
+      // Link timing: quantized launch on the Link beat grid (16ths), always forward to the
+      // next grid point like Live's launch quantization, and send the Link beat itself so
+      // every peer plays it at the same Link moment.
+      const lookAheadMs = (this.Tone.context.lookAhead || 0) * 1000;
+      const nowBeat = this.linkBeatAtTime(performance.now() + lookAheadMs);
+      let linkBeat = nowBeat;
+      if (tl.isPlaying && snapStrength > 0) {
+        const grid = 0.25;
+        // Earliest grid point the other peers can still hit: measured one-way latency.
+        const reachBeat = this.linkBeatAtTime(performance.now() + lookAheadMs + this._sessionOneWayMs());
+        linkBeat = nowBeat + (Math.ceil(reachBeat / grid) * grid - nowBeat) * Math.min(1, snapStrength);
+      }
+      const scheduledTime = this._audioTimeForPerfMs(this.linkTimeAtBeat(linkBeat));
+      if (this.onPadTriggered) this.onPadTriggered(instrument, note, velocity, scheduledTime, extra);
+      this.broadcast({
+        type: 'PAD_PLAY', appName: this.appName, instrument, note, velocity, linkBeat,
+        delayFromSendMs: Math.max(0, Math.round((scheduledTime - this.Tone.now()) * 1000)), extra
+      });
+      return;
+    }
     const now = this.Tone.now();
     const bpm = this.Tone.Transport.bpm.value;
     const sixteenthDuration = (60 / bpm) / 4;
@@ -2507,7 +2525,7 @@ class StartJamTransportAction extends JamAction {
 
   async _executeAction() {
     if (!this.client.userRole) {
-      Tone.Transport.start(this.client.connector.config.client.legacy.localStartOffset);
+      Tone.Transport.start();
     } else {
       this.client.connector.startTransport(this.client.bpm);
     }

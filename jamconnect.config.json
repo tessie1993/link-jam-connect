@@ -34,9 +34,7 @@
     "hostStateIntervalMs": 250,
     "followIntervalMs": 50,
     "followMaxDriftMs": 8,
-    "followStartLeadMs": 30,
     "paramChangeBufferMs": 30,
-    "startDelaySec": 0.015,
     "linkClock": {
       "measurePoints": 100,
       "minPoints": 6,
@@ -46,13 +44,8 @@
     },
     "heartbeatIntervalMs": 10000,
     "legacy": {
-      "fallbackRttMs": 20,
-      "padDelayMs": 20,
-      "startOffsetSec": 0.02,
-      "heartbeatMaxDriftSec": 0.025,
       "rejectCloseDelayMs": 150,
-      "clockSamples": 8,
-      "localStartOffset": "+0.5"
+      "clockSamples": 8
     }
   },
   "webrtc": {

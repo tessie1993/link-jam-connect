@@ -125,6 +125,30 @@ play an instrument inside Ableton through the Max for Live device.
 
 `MIDI_EVENT.event` = `{ kind: "noteon"|"noteoff"|"cc", note|cc, velocity|value, channel }`.
 
+## Timing rules (Link owns musical timing)
+
+The library adds no musical delays of its own. Every timing comes from Link or
+from a measurement:
+
+* **Start / stop / tempo** inside a session always go through the Link timeline
+  (`LINK_SET_PLAYING` / `LINK_SET_TEMPO`). With peers present, a start lands on the
+  next quantum boundary, like Link's `requestBeatAtStartPlayingTime`. Tone.js
+  follows the timeline (`client.followLink`, default `true`). Joining a playing
+  session starts phase-aligned at the audio engine's own lookahead.
+* **`PAD_PLAY.linkBeat`**: the Link beat the pad sounds on. Receivers schedule it
+  at that beat on their own timeline, so every peer plays it at the same Link
+  moment. Snapped pads (snap strength > 0) go forward to the next 1/16 grid point
+  that the session can still reach, using the **measured** one-way latency (half
+  the median RTT from the Link clock measurement). Unsnapped pads and messages
+  without `linkBeat` play on arrival. `delayFromSendMs` is still sent for older
+  receivers.
+* Legacy `TRANSPORT_STATE` / `TRANSPORT_HEARTBEAT` are ignored for timing whenever
+  a Link timeline exists. A host without a bridge still emits them for older
+  JamConnect builds, with `delaySec` taken from the Link start time.
+* The only 500 ms in the system is Link's own `SESSION_EPS` (when two Link sessions
+  meet, the older one wins only if it is more than 500 ms older). It belongs to Link
+  and is not changed.
+
 ## Ableton Live control (Max for Live device)
 
 The Max for Live device "JamConnect Link" is a bridge client. Its LiveAPI side

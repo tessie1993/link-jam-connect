@@ -35,9 +35,11 @@ async function waitFor(fn, timeoutMs, stepMs = 25) {
   while (Date.now() < end) { const v = fn(); if (v) return v; await sleep(stepMs); }
   return fn();
 }
+// Tone stand-in with Tone's clock relations: now() = context.currentTime + lookAhead.
+const TONE_LOOKAHEAD_SEC = 0.1; // Tone.js default context lookAhead
 const tone = () => ({
-  now: () => performance.now() / 1000,
-  context: { lookAhead: 0, currentTime: 0 },
+  context: { lookAhead: TONE_LOOKAHEAD_SEC, get currentTime() { return performance.now() / 1000; } },
+  now() { return this.context.currentTime + this.context.lookAhead; },
   Transport: { bpm: { value: null }, swing: 0, state: 'stopped', seconds: 0, ticks: 0, PPQ: 192,
     start() { this.state = 'started'; }, stop() { this.state = 'stopped'; } }
 });
@@ -94,6 +96,25 @@ await sleep(150);
 guest.setLinkPlaying(false);
 await sleep(400);
 ok(host.getLinkState().isPlaying, 'host ignores guest stop without syncTransport permission');
+
+// ---- Link-timed pads: a snapped pad sounds at the same Link moment on every peer
+await waitFor(() => (guest.linkClocks.get('HOST') || {}).measurements > 0, 10000);
+host.sendPermissionsUpdate({ syncTransport: true });
+await sleep(150);
+if (!host.getLinkState().isPlaying) host.setLinkPlaying(true);
+await sleep(300);
+let padWorst = 0, padsSeen = 0;
+for (let i = 0; i < 12; i++) {
+  let hostAt = null, guestAt = null;
+  host.onPadTriggered = (app, inst, note, vel, t) => { hostAt = t; };
+  guest.onPadTriggered = (inst, note, vel, t) => { guestAt = t; };
+  guest.triggerPad('guest', 'drum', 'C2', 0.9, 1);
+  await waitFor(() => hostAt !== null, 2000);
+  if (hostAt !== null && guestAt !== null) { padsSeen++; padWorst = Math.max(padWorst, Math.abs(hostAt - guestAt) * 1000); }
+  await sleep(150 + Math.random() * 150);
+}
+ok(padsSeen === 12, 'PAD_PLAY carries linkBeat and reaches host');
+ok(padWorst < limitMs, 'snapped pads sound at the same Link moment on guest and host', `worst ${padWorst.toFixed(2)} ms`);
 guest.disconnect();
 host.disconnect();
 
