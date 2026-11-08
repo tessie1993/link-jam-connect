@@ -186,6 +186,8 @@
     let userStopped = false;
     let retryTimer = null;
     let retryTick = null;
+    let attemptSeq = 0;       // bumped by every connect / host / join: older attempts are ignored
+    let lastStatus = null;    // connection handlers run on status changes only
 
     // ---------------------------------------------------------------- helpers
     function log(line) {
@@ -307,6 +309,7 @@
 
     async function connectLocal() {
       stopRetry();
+      const attempt = ++attemptSeq;
       mode = 'local';
       userStopped = false;
       connecting = true;
@@ -314,26 +317,32 @@
       const url = $('jc-local-url').value.trim();
       try {
         await connector.joinLocalBridge(url, $('jc-local-token').value.trim(), userName());
-        setBridgeBadge('connected');
-        log(`connected to bridge ${url}`);
       } catch (err) {
+        // A host/join started meanwhile replaced this attempt: no retry, no log noise.
+        if (attempt !== attemptSeq) return;
         log(`bridge ${url}: ${err.message || err}`);
         connecting = false;
         scheduleRetry(err.message || String(err));
         return;
       }
+      if (attempt !== attemptSeq) return;
       connecting = false;
-      for (const h of connHandlers) h('connected');
+      setBridgeBadge('connected');
+      log(`connected to bridge ${url}`);
     }
 
     async function attachBridge() {
       stopRetry();
+      const attempt = attemptSeq;
       const url = $('jc-host-bridge-url').value.trim();
       try {
         await connector.attachLocalBridge(url, $('jc-host-bridge-token').value.trim());
+        if (attempt !== attemptSeq) return;
         log(`bridge attached: ${url}`);
+        // The host's own app (re)announces itself to the Ableton side now that it is reachable.
         for (const h of connHandlers) h('connected');
       } catch (err) {
+        if (attempt !== attemptSeq || mode !== 'host') return;
         log(`bridge ${url}: ${err.message || err}`);
         scheduleRetry(err.message || String(err));
       }
@@ -348,7 +357,10 @@
       try {
         mode = 'host';
         userStopped = false;
+        connecting = false;
+        const attempt = ++attemptSeq; // cancels the automatic local-bridge connection
         const info = await connector.createHostSession();
+        if (attempt !== attemptSeq) return;
         $('jc-host-info').classList.remove('hidden');
         $('jc-host-session').textContent = info.sessionId;
         $('jc-host-token').textContent = info.authToken;
@@ -370,25 +382,29 @@
       const parsed = JamConnector.parseInviteInput(e.target.value);
       if (parsed) { $('jc-join-invite').value = parsed.sessionId; $('jc-join-token').value = parsed.authToken; }
     });
-    $('jc-join-connect').addEventListener('click', async (e) => {
-      e.target.disabled = true;
+    async function joinSession() {
+      const btn = $('jc-join-connect');
+      btn.disabled = true;
       stopRetry();
       showError('');
       mode = 'join';
       userStopped = false;
+      connecting = false;
+      const attempt = ++attemptSeq;
       try {
         await connector.joinHost($('jc-join-invite').value, $('jc-join-token').value, userName());
-        log(`joined ${connector.sessionId}`);
-        for (const h of connHandlers) h('connected');
+        if (attempt === attemptSeq) log(`joined ${connector.sessionId}`);
       } catch (err) {
-        showError(err.message || String(err));
+        if (attempt === attemptSeq) showError(err.message || String(err));
       } finally {
-        e.target.disabled = false;
+        btn.disabled = false;
       }
-    });
+    }
+    $('jc-join-connect').addEventListener('click', joinSession);
 
     $('jc-disconnect').addEventListener('click', () => {
       userStopped = true;
+      attemptSeq++;
       stopRetry();
       connector.disconnect();
       $('jc-host-info').classList.add('hidden');
@@ -411,6 +427,9 @@
       }
       if (s.status === 'disconnected' && mode === 'join') showError('Disconnected from the host.');
       applyPermissionLocks();
+      // The library repeats 'connected' after every clock sync (RTT update); apps react to changes only.
+      if (s.status === lastStatus) return;
+      lastStatus = s.status;
       for (const h of connHandlers) h(s.status);
     };
     connector.onBridgeStateChange = (s) => {
@@ -510,11 +529,12 @@
 
     if (configError) showError(configError);
 
-    // Invite links open the join tab; otherwise connect to the bridge right away.
+    // Invite links join the host right away; otherwise connect to the bridge right away.
     if (params.get('session') && params.get('token')) {
       selectTab('join');
       $('jc-join-invite').value = params.get('session');
       $('jc-join-token').value = params.get('token');
+      setTimeout(joinSession, 0);
     } else {
       setTimeout(connectLocal, 0);
     }

@@ -55,7 +55,10 @@ const JAMCONNECT_FALLBACK_CONFIG = {
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' }
     ],
-    signal: {}
+    signal: {},
+    // Public site that serves the same pages (e.g. GitHub Pages). Invites made on a page served
+    // from this machine (127.0.0.1 / LAN / file:) point here, so remote guests can open them.
+    inviteBaseUrl: ''
   },
   runtime: {}
 };
@@ -120,6 +123,14 @@ function jamRemoteControlPermission(msg) {
   if (['LIVE_SET_PARAM', 'LIVE_SET_DEVICE_ACTIVE', 'M4L_SET_MACRO', 'M4L_MAP_MACRO', 'M4L_UNMAP_MACRO'].includes(t)) return 'syncDeviceParameterChange';
   if (['M4L_NOTE', 'M4L_CC', 'M4L_SET_MIDI_FORWARD'].includes(t)) return 'syncMidi';
   return 'syncLiveControl';
+}
+
+/** True when only this machine / LAN can open the URL (loopback, private ranges, .local, file:). */
+function jamIsLocalOrigin(url) {
+  if (url.protocol === 'file:') return true;
+  const h = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  return h === 'localhost' || h === '::1' || h.endsWith('.local') || /^127\./.test(h) || /^10\./.test(h)
+    || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^169\.254\./.test(h) || (h.includes(':') && /^f[cd]/.test(h));
 }
 
 // Peer ids a WebRTC guest may never use: senders are keyed by id ('HOST' upstream, BRIDGE_PEER_ID local).
@@ -588,9 +599,13 @@ class JamConnector {
     // Host state: Map<peerId, { conn, authenticated, name, rtt, timeOffset, samples }>
     this.peers = new Map();
 
+    // Host side: clients of the attached bridge (Ableton-side apps, the M4L device).
+    this.bridgePeers = [];
+
     // Guest state
     this.hostConn = null;
     this.isConnectedToHost = false;
+    this.sessionPeers = [];  // last PEER_LIST from our host / bridge
     this.timeOffset = 0; // ms difference: hostClock - localClock
     this.rtt = 0;
 
@@ -669,7 +684,15 @@ class JamConnector {
 
   buildInviteUrl(sessionId = this.sessionId, authToken = this.authToken) {
     if (!sessionId || !authToken) return '';
-    const url = new URL(window.location.href);
+    let url = new URL(window.location.href);
+    // A page served by the local bridge has a URL only this machine can open.
+    const base = this.config.webrtc.inviteBaseUrl;
+    if (base && jamIsLocalOrigin(url)) {
+      const site = new URL(base);
+      const sitePath = site.pathname.endsWith('/') ? site.pathname : `${site.pathname}/`;
+      url = new URL(url.pathname.replace(/^\/+/, '') + url.search, new URL(sitePath, site.origin));
+      url.searchParams.delete('bridge');
+    }
     url.searchParams.set('session', sessionId);
     url.searchParams.set('token', authToken);
     url.hash = '';
@@ -876,6 +899,10 @@ class JamConnector {
         }
         return;
       }
+      if (!msg || typeof msg !== 'object') return;
+      // Same rule as the bridge: relayed traffic without a sender gets the guest's name
+      // (otherwise the bridge stamps the host's connection name on every guest request).
+      if (msg.from === undefined) msg.from = peerRecord.name;
       this._routeMessage(msg, peerId);
     });
 
@@ -885,7 +912,7 @@ class JamConnector {
       if (existed) {
         this._broadcastPeerList();
         if (this.onPeerDisconnected) {
-          this.onPeerDisconnected(peerId, this.getConnectedPeersList());
+          this.onPeerDisconnected(peerId, this.getSessionPeers());
         }
         this._emitConnectionState('hosting', `Session ${this.sessionId} (${this.getConnectedPeersList().length} joined)`);
       }
@@ -922,7 +949,7 @@ class JamConnector {
     this._broadcastPeerList();
 
     if (this.onPeerConnected) {
-      this.onPeerConnected(id, this.getConnectedPeersList());
+      this.onPeerConnected(id, this.getSessionPeers());
     }
     this._emitConnectionState('hosting', `Session ${this.sessionId} (${this.getConnectedPeersList().length} joined)`);
   }
@@ -1049,10 +1076,10 @@ class JamConnector {
         this._applyTransportSync(msg);
         this._startLinkClock('HOST', conn);
         if (msg.link) this._handleLinkState(msg.link, 'HOST');
+        // Until the host's PEER_LIST arrives, the session is just the host.
+        this.sessionPeers = [{ id: 'HOST', name: msg.hostAppName || 'Host', appName: msg.hostAppName || 'Host', rtt: this.rtt }];
         this._emitConnectionState('connected', `Connected to ${this.sessionId}`);
-        if (this.onPeerConnected) {
-          this.onPeerConnected('HOST', [{ id: 'HOST', name: msg.hostAppName || 'Host', rtt: this.rtt }]);
-        }
+        if (this.onPeerConnected) this.onPeerConnected('HOST', this.sessionPeers);
         done.resolve({ sessionId: this.sessionId });
         return;
       }
@@ -1062,10 +1089,12 @@ class JamConnector {
 
     const handleDisconnect = () => {
       done.clearTimeout();
-      if (this.hostConn !== conn) return;
+      // Replaced by a newer connect/host/join: settle this attempt quietly (the caller ignores it).
+      if (this.hostConn !== conn) { done.reject(new Error('Connection replaced')); return; }
       const wasConnected = this.isConnectedToHost;
       this.isConnectedToHost = false;
       this.hostConn = null;
+      this.sessionPeers = [];
       this._stopLinkClock('HOST');
       this._emitConnectionState('disconnected', 'Disconnected from Host');
       if (wasConnected && this.onPeerDisconnected) {
@@ -1171,6 +1200,7 @@ class JamConnector {
       conn.on('close', () => {
         if (this.bridgeConn !== conn) return;
         this.bridgeConn = null;
+        this._dropBridgePeers();
         this._stopLinkClock(BRIDGE_PEER_ID);
         this._emitBridgeState('disconnected', 'Bridge disconnected');
         if (this.isHost) this._becomeLinkAuthority();
@@ -1184,11 +1214,18 @@ class JamConnector {
       const conn = this.bridgeConn;
       this.bridgeConn = null;
       try { conn.close(); } catch (_) {}
+      this._dropBridgePeers();
       this._stopLinkClock(BRIDGE_PEER_ID);
       this._emitBridgeState('idle', 'Bridge detached');
       // Keep guests on a timeline: the host takes over (pure JamConnect session).
       if (this.isHost && this.peer) this._becomeLinkAuthority();
     }
+  }
+
+  _dropBridgePeers() {
+    if (!this.bridgePeers.length) return;
+    this.bridgePeers = [];
+    if (this.isHost) this._broadcastPeerList();
   }
 
   get hasBridge() {
@@ -1448,6 +1485,7 @@ class JamConnector {
 
     this.isHost = false;
     this.isConnectedToHost = false;
+    this.sessionPeers = [];
     this._emitConnectionState('idle', 'Offline');
   }
 
@@ -1501,11 +1539,21 @@ class JamConnector {
     });
   }
 
+  /**
+   * Everyone in the session as this node sees it. Host: the guests plus the clients of its
+   * bridge (Ableton side). Guest / local client: the last PEER_LIST from the host or bridge.
+   * includeSelf adds the host itself (what guests are sent).
+   */
+  getSessionPeers(includeSelf = false) {
+    if (!this.isHost) return this.sessionPeers.slice();
+    const self = includeSelf ? [{ id: 'HOST', name: this.appName, appName: this.appName, rtt: 0 }] : [];
+    return [...self, ...this.getConnectedPeersList(), ...this.bridgePeers];
+  }
+
   _broadcastPeerList() {
-    const peerList = this.getConnectedPeersList();
     this.broadcast({
       type: 'PEER_LIST',
-      peers: peerList
+      peers: this.getSessionPeers(true)
     });
   }
 
@@ -1596,13 +1644,24 @@ class JamConnector {
         break;
 
       case 'PEER_LIST':
+        if (senderId === BRIDGE_PEER_ID && this.isHost) {
+          // Ableton-side clients of our bridge: shown to the host and passed on to guests.
+          const own = this.bridgeConn && this.bridgeConn.metadata.name;
+          this.bridgePeers = (msg.peers || []).filter((p) => p.name !== own);
+          this._broadcastPeerList();
+          if (this.onPeerConnected) this.onPeerConnected(BRIDGE_PEER_ID, this.getSessionPeers());
+          return;
+        }
         if (senderId !== 'HOST') return;
+        this.sessionPeers = msg.peers || [];
         if (this.onPeerConnected) {
-          this.onPeerConnected('HOST', msg.peers || []);
+          this.onPeerConnected('HOST', this.sessionPeers);
         }
         break;
 
       case 'PERMISSIONS_UPDATE':
+        // Only our host grants permissions (a guest must never be able to unlock the host).
+        if (senderId !== 'HOST') return;
         this.permissions = { ...this.permissions, ...msg.permissions };
         if (this.onPermissionsUpdated) this.onPermissionsUpdated(this.permissions);
         break;
@@ -1821,7 +1880,7 @@ class JamConnector {
         sessionId: this.sessionId,
         authToken: this.authToken,
         inviteUrl: this.buildInviteUrl(),
-        peers: this.getConnectedPeersList(),
+        peers: this.getSessionPeers(),
         rtt: Math.round(this.rtt || 0)
       });
     }

@@ -149,11 +149,12 @@
     log('disconnected');
   });
 
-  // Invite links open straight into the join tab.
+  // Invite links open the join tab and join the host right away.
   if (params.get('session') && params.get('token')) {
     selectTab('join');
     $('join-invite').value = params.get('session');
     $('join-token').value = params.get('token');
+    setTimeout(() => $('join-connect').click(), 0);
   }
 
   // ---------------------------------------------------------------- connector events
